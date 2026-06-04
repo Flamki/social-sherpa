@@ -1,5 +1,6 @@
 import { Link } from "@tanstack/react-router";
 import { Linkedin } from "lucide-react";
+import { useMemo } from "react";
 
 import { Badge } from "@/components/ui/badge";
 import { useStore, warmupDay, todaysUsage, effectiveCaps } from "@/lib/store";
@@ -12,10 +13,11 @@ const tabs = [
 ] as const;
 
 export function Nav() {
-  const session = useStore((s) => s.session);
-  const day = useStore((s) => warmupDay(s));
-  const usage = useStore((s) => todaysUsage(s));
-  const caps = useStore((s) => effectiveCaps(s));
+  const state = useStore((s) => s);
+  const session = state.session;
+  const day = useMemo(() => warmupDay(state), [state]);
+  const usage = useMemo(() => todaysUsage(state), [state]);
+  const caps = useMemo(() => effectiveCaps(state), [state]);
   return (
     <header className="border-b">
       <div className="mx-auto flex max-w-7xl items-center justify-between gap-4 px-6 py-3">
