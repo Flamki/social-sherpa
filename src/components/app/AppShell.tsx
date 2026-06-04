@@ -1,6 +1,6 @@
 import { Link } from "@tanstack/react-router";
 import { useMemo, useState, useEffect, type ReactNode } from "react";
-import { Sparkles, Users, Inbox, UserPlus, LayoutDashboard, Settings, Chrome, PanelLeftClose, PanelLeft, User, Moon, Sun, LogOut } from "lucide-react";
+import { Users, Inbox, UserPlus, LayoutDashboard, Settings, Chrome, PanelLeftClose, PanelLeft, User, Moon, Sun, LogOut } from "lucide-react";
 import {
   DropdownMenu,
   DropdownMenuTrigger,
@@ -11,6 +11,7 @@ import {
 
 import { useStore, warmupDay, todaysUsage, effectiveCaps } from "@/lib/store";
 import crockbotLogo from "@/assets/crockbot-logo.png";
+import aiAgentLogo from "@/assets/ai-agent-logo.png";
 
 const nav = [
   { to: "/", label: "AI Agent", icon: Sparkles, exact: true },
