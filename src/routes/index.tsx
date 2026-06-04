@@ -47,7 +47,13 @@ function Index() {
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
+  const turnRefs = useRef<Array<HTMLDivElement | null>>([]);
   const [activeSeg, setActiveSeg] = useState(0);
+
+  // Indices of user messages — each is one "turn" / segment in the scrollbar
+  const turnIndices = messages
+    .map((m, i) => (m.role === "user" ? i : -1))
+    .filter((i) => i >= 0);
 
   useEffect(() => { startWorker(); }, []);
 
@@ -58,21 +64,30 @@ function Index() {
     el.scrollTo({ top: el.scrollHeight, behavior: "smooth" });
   }, [messages, loading]);
 
-  // Track which segment (message) is currently in view for the scrollbar dots
+  // Track which turn (user message) is currently in view for the segment indicator
   useEffect(() => {
     const el = scrollRef.current;
     if (!el) return;
     const onScroll = () => {
-      const ratio = el.scrollHeight <= el.clientHeight
-        ? 1
-        : el.scrollTop / (el.scrollHeight - el.clientHeight);
-      const total = Math.max(1, messages.length);
-      setActiveSeg(Math.min(total - 1, Math.round(ratio * (total - 1))));
+      const top = el.scrollTop;
+      let current = 0;
+      turnRefs.current.forEach((node, i) => {
+        if (!node) return;
+        if (node.offsetTop - 80 <= top) current = i;
+      });
+      setActiveSeg(current);
     };
     onScroll();
     el.addEventListener("scroll", onScroll, { passive: true });
     return () => el.removeEventListener("scroll", onScroll);
-  }, [messages.length]);
+  }, [turnIndices.length]);
+
+  function scrollToTurn(i: number) {
+    const el = scrollRef.current;
+    const node = turnRefs.current[i];
+    if (!el || !node) return;
+    el.scrollTo({ top: node.offsetTop - 16, behavior: "smooth" });
+  }
 
   async function send(override?: string) {
     const text = (override ?? input).trim();
@@ -121,7 +136,15 @@ function Index() {
           >
             <div className="flex flex-col gap-4 px-6 py-6">
             {messages.map((m, i) => (
-              <div key={i} className={`flex gap-3 ${m.role === "user" ? "flex-row-reverse" : ""}`}>
+              <div
+                key={i}
+                ref={(node) => {
+                  if (m.role !== "user") return;
+                  const turnIdx = turnIndices.indexOf(i);
+                  if (turnIdx >= 0) turnRefs.current[turnIdx] = node;
+                }}
+                className={`flex gap-3 ${m.role === "user" ? "flex-row-reverse" : ""}`}
+              >
                 <div
                   className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-[10px] font-semibold ${
                     m.role === "user"
@@ -163,16 +186,19 @@ function Index() {
             )}
             </div>
           </div>
-          {messages.length > 1 && (
+          {turnIndices.length > 0 && (
             <div
               aria-hidden="true"
-              className="pointer-events-none absolute inset-y-4 right-1.5 flex w-1 flex-col items-stretch justify-center gap-1"
+              className="absolute inset-y-6 right-1.5 flex w-3 flex-col items-stretch justify-center gap-1.5"
             >
-              {messages.map((_, i) => (
-                <span
+              {turnIndices.map((_, i) => (
+                <button
                   key={i}
+                  type="button"
+                  onClick={() => scrollToTurn(i)}
+                  aria-label={`Jump to message ${i + 1}`}
                   className={`h-0.5 w-full rounded-full transition-colors ${
-                    i === activeSeg ? "bg-foreground" : "bg-muted-foreground/30"
+                    i === activeSeg ? "bg-foreground" : "bg-muted-foreground/30 hover:bg-muted-foreground/60"
                   }`}
                 />
               ))}
