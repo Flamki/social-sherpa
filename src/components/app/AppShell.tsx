@@ -93,6 +93,7 @@ export function AppShell({
           {nav.map((t) => {
             const Icon = t.icon;
             const badge = "badgeKey" in t && t.badgeKey ? badges[t.badgeKey] : 0;
+            const isImage = "isImage" in t && t.isImage;
             return (
               <Link
                 key={t.to}
@@ -109,7 +110,11 @@ export function AppShell({
                 activeOptions={{ exact: "exact" in t ? t.exact : false }}
               >
                 <span className="flex items-center gap-3">
-                  <Icon className="h-4 w-4" />
+                  {isImage ? (
+                    <img src={Icon} alt="" className="h-5 w-5 object-contain" />
+                  ) : (
+                    <Icon className="h-4 w-4" />
+                  )}
                   {!collapsed && t.label}
                 </span>
                 {!collapsed && badge > 0 && (
