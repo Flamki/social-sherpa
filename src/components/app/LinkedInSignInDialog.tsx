@@ -22,6 +22,68 @@ import {
 } from "@/components/ui/select";
 import { store } from "@/lib/store";
 
+const COUNTRIES: { code: string; name: string; flag: string }[] = [
+  { code: "ar", name: "Argentina", flag: "🇦🇷" },
+  { code: "au", name: "Australia", flag: "🇦🇺" },
+  { code: "at", name: "Austria", flag: "🇦🇹" },
+  { code: "bd", name: "Bangladesh", flag: "🇧🇩" },
+  { code: "be", name: "Belgium", flag: "🇧🇪" },
+  { code: "br", name: "Brazil", flag: "🇧🇷" },
+  { code: "bg", name: "Bulgaria", flag: "🇧🇬" },
+  { code: "ca", name: "Canada", flag: "🇨🇦" },
+  { code: "cl", name: "Chile", flag: "🇨🇱" },
+  { code: "cn", name: "China", flag: "🇨🇳" },
+  { code: "co", name: "Colombia", flag: "🇨🇴" },
+  { code: "cz", name: "Czech Republic", flag: "🇨🇿" },
+  { code: "dk", name: "Denmark", flag: "🇩🇰" },
+  { code: "eg", name: "Egypt", flag: "🇪🇬" },
+  { code: "fi", name: "Finland", flag: "🇫🇮" },
+  { code: "fr", name: "France", flag: "🇫🇷" },
+  { code: "de", name: "Germany", flag: "🇩🇪" },
+  { code: "gr", name: "Greece", flag: "🇬🇷" },
+  { code: "hk", name: "Hong Kong", flag: "🇭🇰" },
+  { code: "hu", name: "Hungary", flag: "🇭🇺" },
+  { code: "is", name: "Iceland", flag: "🇮🇸" },
+  { code: "in", name: "India", flag: "🇮🇳" },
+  { code: "id", name: "Indonesia", flag: "🇮🇩" },
+  { code: "ie", name: "Ireland", flag: "🇮🇪" },
+  { code: "il", name: "Israel", flag: "🇮🇱" },
+  { code: "it", name: "Italy", flag: "🇮🇹" },
+  { code: "jp", name: "Japan", flag: "🇯🇵" },
+  { code: "ke", name: "Kenya", flag: "🇰🇪" },
+  { code: "my", name: "Malaysia", flag: "🇲🇾" },
+  { code: "mx", name: "Mexico", flag: "🇲🇽" },
+  { code: "nl", name: "Netherlands", flag: "🇳🇱" },
+  { code: "nz", name: "New Zealand", flag: "🇳🇿" },
+  { code: "ng", name: "Nigeria", flag: "🇳🇬" },
+  { code: "no", name: "Norway", flag: "🇳🇴" },
+  { code: "pk", name: "Pakistan", flag: "🇵🇰" },
+  { code: "pe", name: "Peru", flag: "🇵🇪" },
+  { code: "ph", name: "Philippines", flag: "🇵🇭" },
+  { code: "pl", name: "Poland", flag: "🇵🇱" },
+  { code: "pt", name: "Portugal", flag: "🇵🇹" },
+  { code: "qa", name: "Qatar", flag: "🇶🇦" },
+  { code: "ro", name: "Romania", flag: "🇷🇴" },
+  { code: "ru", name: "Russia", flag: "🇷🇺" },
+  { code: "sa", name: "Saudi Arabia", flag: "🇸🇦" },
+  { code: "sg", name: "Singapore", flag: "🇸🇬" },
+  { code: "za", name: "South Africa", flag: "🇿🇦" },
+  { code: "kr", name: "South Korea", flag: "🇰🇷" },
+  { code: "es", name: "Spain", flag: "🇪🇸" },
+  { code: "se", name: "Sweden", flag: "🇸🇪" },
+  { code: "ch", name: "Switzerland", flag: "🇨🇭" },
+  { code: "tw", name: "Taiwan", flag: "🇹🇼" },
+  { code: "th", name: "Thailand", flag: "🇹🇭" },
+  { code: "tr", name: "Turkey", flag: "🇹🇷" },
+  { code: "ua", name: "Ukraine", flag: "🇺🇦" },
+  { code: "ae", name: "United Arab Emirates", flag: "🇦🇪" },
+  { code: "uk", name: "United Kingdom", flag: "🇬🇧" },
+  { code: "us", name: "United States", flag: "🇺🇸" },
+  { code: "uy", name: "Uruguay", flag: "🇺🇾" },
+  { code: "ve", name: "Venezuela", flag: "🇻🇪" },
+  { code: "vn", name: "Vietnam", flag: "🇻🇳" },
+];
+
 export function LinkedInSignInDialog({ trigger }: { trigger: ReactNode }) {
   const [open, setOpen] = useState(false);
   const [tab, setTab] = useState<"credentials" | "cookies">("credentials");
@@ -176,13 +238,14 @@ export function LinkedInSignInDialog({ trigger }: { trigger: ReactNode }) {
                     <SelectTrigger className="ml-6 w-[calc(100%-1.5rem)]">
                       <SelectValue />
                     </SelectTrigger>
-                    <SelectContent>
+                    <SelectContent className="max-h-72">
                       <SelectItem value="ip">(Default) Based on IP address</SelectItem>
-                      <SelectItem value="us">United States</SelectItem>
-                      <SelectItem value="uk">United Kingdom</SelectItem>
-                      <SelectItem value="de">Germany</SelectItem>
-                      <SelectItem value="fr">France</SelectItem>
-                      <SelectItem value="in">India</SelectItem>
+                      {COUNTRIES.map((c) => (
+                        <SelectItem key={c.code} value={c.code}>
+                          <span className="mr-2 text-base leading-none">{c.flag}</span>
+                          {c.name}
+                        </SelectItem>
+                      ))}
                     </SelectContent>
                   </Select>
                   <div className="flex items-center gap-2">
