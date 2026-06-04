@@ -128,11 +128,11 @@ function Index() {
           )}
         </div>
       )}
-      <div className="mx-auto flex min-h-0 w-full max-w-3xl flex-1 flex-col">
-        <div className="relative flex min-h-0 flex-1">
+      <div className="relative flex min-h-0 flex-1 flex-col">
+        <div className="mx-auto flex min-h-0 w-full max-w-3xl flex-1 flex-col">
           <div
             ref={scrollRef}
-            className="flex-1 overflow-y-auto scroll-smooth [&::-webkit-scrollbar]:hidden [scrollbar-width:none]"
+            className="min-h-0 flex-1 overflow-y-auto scroll-smooth [&::-webkit-scrollbar]:hidden [scrollbar-width:none]"
           >
             <div className="flex flex-col gap-4 px-6 py-6">
             {messages.map((m, i) => (
@@ -186,26 +186,8 @@ function Index() {
             )}
             </div>
           </div>
-          {turnIndices.length > 0 && (
-            <div
-              aria-hidden="true"
-              className="absolute inset-y-6 right-1.5 flex w-3 flex-col items-stretch justify-center gap-1.5"
-            >
-              {turnIndices.map((_, i) => (
-                <button
-                  key={i}
-                  type="button"
-                  onClick={() => scrollToTurn(i)}
-                  aria-label={`Jump to message ${i + 1}`}
-                  className={`h-0.5 w-full rounded-full transition-colors ${
-                    i === activeSeg ? "bg-foreground" : "bg-muted-foreground/30 hover:bg-muted-foreground/60"
-                  }`}
-                />
-              ))}
-            </div>
-          )}
-        </div>
         <div className="border-t bg-background px-6 py-4">
+          <div className="mx-auto w-full max-w-3xl">
           <div className="flex gap-2">
             <Input
               value={input}
@@ -219,7 +201,26 @@ function Index() {
               <Send className="h-4 w-4" />
             </Button>
           </div>
+          </div>
         </div>
+        </div>
+        {turnIndices.length > 0 && (
+          <div
+            className="pointer-events-none absolute right-2 top-0 bottom-20 z-10 flex w-2 flex-col items-stretch justify-center gap-1.5 py-6"
+          >
+            {turnIndices.map((_, i) => (
+              <button
+                key={i}
+                type="button"
+                onClick={() => scrollToTurn(i)}
+                aria-label={`Jump to message ${i + 1}`}
+                className={`pointer-events-auto h-0.5 w-full rounded-full transition-colors ${
+                  i === activeSeg ? "bg-foreground" : "bg-muted-foreground/30 hover:bg-muted-foreground/60"
+                }`}
+              />
+            ))}
+          </div>
+        )}
       </div>
     </AppShell>
   );
