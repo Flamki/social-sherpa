@@ -3,6 +3,7 @@ import { useMemo, type ReactNode } from "react";
 import { Bot, Users, Inbox, UserPlus, LayoutDashboard, Settings, Chrome } from "lucide-react";
 
 import { useStore, warmupDay, todaysUsage, effectiveCaps } from "@/lib/store";
+import crockbotLogo from "@/assets/crockbot-logo.png";
 
 const nav = [
   { to: "/", label: "AI Agent", icon: Bot, exact: true },
@@ -41,17 +42,16 @@ export function AppShell({
   return (
     <div className="flex h-screen overflow-hidden bg-muted/30 text-foreground">
       <aside className="hidden w-60 shrink-0 flex-col border-r bg-background md:flex">
-        <div className="flex items-center gap-2 px-5 py-5">
-          <div className="flex h-8 w-8 items-center justify-center rounded-md bg-primary text-primary-foreground">
-            <svg viewBox="0 0 24 24" fill="currentColor" className="h-5 w-5">
-              <path d="M2 15c1.5-2 4-3 7-3s5.5 1 7 3c.5.7.5 1.5 0 2.2-.3.5-.8.8-1.3.8H3.3c-.5 0-1-.3-1.3-.8-.5-.7-.5-1.5 0-2.2z" />
-              <circle cx="6" cy="12" r="1.5" />
-              <circle cx="10" cy="12" r="1.5" />
-              <path d="M16 13c2 0 3.5.5 4.5 1.5.5.5.5 1.2 0 1.7-.3.3-.7.5-1.1.5h-.8" stroke="currentColor" strokeWidth="1.5" fill="none" />
-              <path d="M17.5 13.5c1-.5 2.5-.5 3.5 0" stroke="currentColor" strokeWidth="1.2" fill="none" strokeLinecap="round" />
-            </svg>
-          </div>
-          <span className="text-sm font-semibold">CrockBot</span>
+        <div className="relative px-4 py-5">
+          <img
+            src={crockbotLogo}
+            alt="CrockBot"
+            className="pointer-events-none absolute left-0 top-1 h-14 w-auto select-none"
+          />
+          <span className="relative ml-16 inline-block text-lg font-extrabold tracking-tight">
+            CrockBot
+          </span>
+          <span className="pointer-events-none absolute bottom-2 left-16 right-3 h-[2px] rounded-full bg-gradient-to-r from-primary/70 to-transparent" />
         </div>
         <nav className="flex-1 px-3">
           {nav.map((t) => {
