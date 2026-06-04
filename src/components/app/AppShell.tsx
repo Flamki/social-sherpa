@@ -11,6 +11,7 @@ import {
 
 import { useStore, warmupDay, todaysUsage, effectiveCaps } from "@/lib/store";
 import crockbotLogo from "@/assets/crockbot-logo.png";
+import { LinkedInSignInDialog } from "@/components/app/LinkedInSignInDialog";
 
 const nav = [
   { to: "/", label: "AI Agent", icon: MessageSquareText, exact: true },
@@ -201,12 +202,24 @@ export function AppShell({
           <h1 className="text-base font-semibold">{title}</h1>
           <div className="flex items-center gap-3 text-xs">
             {rightSlot}
-            <span className="flex items-center gap-1.5 text-muted-foreground">
-              <span
-                className={`h-2 w-2 rounded-full ${session.connected ? "bg-emerald-500" : "bg-amber-500"}`}
+            {session.connected ? (
+              <span className="flex items-center gap-1.5 text-muted-foreground">
+                <span className="h-2 w-2 rounded-full bg-emerald-500" />
+                Connected to LinkedIn
+              </span>
+            ) : (
+              <LinkedInSignInDialog
+                trigger={
+                  <button
+                    type="button"
+                    className="flex items-center gap-1.5 rounded-md px-2 py-1 text-muted-foreground transition hover:bg-muted hover:text-foreground"
+                  >
+                    <span className="h-2 w-2 rounded-full bg-amber-500" />
+                    Not connected
+                  </button>
+                }
               />
-              {session.connected ? "Connected to LinkedIn" : "Not connected"}
-            </span>
+            )}
           </div>
         </header>
         <main className="flex min-w-0 flex-1 flex-col overflow-hidden">{children}</main>
