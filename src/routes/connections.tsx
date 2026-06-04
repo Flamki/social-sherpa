@@ -2,7 +2,7 @@ import { createFileRoute } from "@tanstack/react-router";
 import { useRef } from "react";
 import { Upload, RotateCcw } from "lucide-react";
 
-import { Nav } from "@/components/app/Nav";
+import { AppShell } from "@/components/app/AppShell";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -41,9 +41,8 @@ function ConnectionsPage() {
   }
 
   return (
-    <div className="min-h-screen bg-background">
-      <Nav />
-      <main className="mx-auto max-w-5xl px-6 py-8">
+    <AppShell title="Connections">
+      <div className="mx-auto max-w-5xl px-6 py-6">
         <div className="mb-4 flex items-center justify-between">
           <div>
             <h1 className="text-xl font-semibold">Your connections</h1>
@@ -105,7 +104,7 @@ function ConnectionsPage() {
         <p className="mt-4 text-xs text-muted-foreground">
           How to export: LinkedIn → Settings → Data privacy → Get a copy of your data → Connections only.
         </p>
-      </main>
-    </div>
+      </div>
+    </AppShell>
   );
 }

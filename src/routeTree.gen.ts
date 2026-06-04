@@ -9,15 +9,33 @@
 // Additionally, you should also exclude this file from your linter and/or formatter to prevent it from being checked or modified.
 
 import { Route as rootRouteImport } from './routes/__root'
+import { Route as RequestsRouteImport } from './routes/requests'
+import { Route as OverviewRouteImport } from './routes/overview'
 import { Route as OnboardingRouteImport } from './routes/onboarding'
+import { Route as InboxRouteImport } from './routes/inbox'
 import { Route as ExtensionRouteImport } from './routes/extension'
 import { Route as ConnectionsRouteImport } from './routes/connections'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as ApiPublicLinkSessionRouteImport } from './routes/api/public/link-session'
 
+const RequestsRoute = RequestsRouteImport.update({
+  id: '/requests',
+  path: '/requests',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const OverviewRoute = OverviewRouteImport.update({
+  id: '/overview',
+  path: '/overview',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const OnboardingRoute = OnboardingRouteImport.update({
   id: '/onboarding',
   path: '/onboarding',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const InboxRoute = InboxRouteImport.update({
+  id: '/inbox',
+  path: '/inbox',
   getParentRoute: () => rootRouteImport,
 } as any)
 const ExtensionRoute = ExtensionRouteImport.update({
@@ -45,14 +63,20 @@ export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/connections': typeof ConnectionsRoute
   '/extension': typeof ExtensionRoute
+  '/inbox': typeof InboxRoute
   '/onboarding': typeof OnboardingRoute
+  '/overview': typeof OverviewRoute
+  '/requests': typeof RequestsRoute
   '/api/public/link-session': typeof ApiPublicLinkSessionRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/connections': typeof ConnectionsRoute
   '/extension': typeof ExtensionRoute
+  '/inbox': typeof InboxRoute
   '/onboarding': typeof OnboardingRoute
+  '/overview': typeof OverviewRoute
+  '/requests': typeof RequestsRoute
   '/api/public/link-session': typeof ApiPublicLinkSessionRoute
 }
 export interface FileRoutesById {
@@ -60,7 +84,10 @@ export interface FileRoutesById {
   '/': typeof IndexRoute
   '/connections': typeof ConnectionsRoute
   '/extension': typeof ExtensionRoute
+  '/inbox': typeof InboxRoute
   '/onboarding': typeof OnboardingRoute
+  '/overview': typeof OverviewRoute
+  '/requests': typeof RequestsRoute
   '/api/public/link-session': typeof ApiPublicLinkSessionRoute
 }
 export interface FileRouteTypes {
@@ -69,21 +96,30 @@ export interface FileRouteTypes {
     | '/'
     | '/connections'
     | '/extension'
+    | '/inbox'
     | '/onboarding'
+    | '/overview'
+    | '/requests'
     | '/api/public/link-session'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
     | '/connections'
     | '/extension'
+    | '/inbox'
     | '/onboarding'
+    | '/overview'
+    | '/requests'
     | '/api/public/link-session'
   id:
     | '__root__'
     | '/'
     | '/connections'
     | '/extension'
+    | '/inbox'
     | '/onboarding'
+    | '/overview'
+    | '/requests'
     | '/api/public/link-session'
   fileRoutesById: FileRoutesById
 }
@@ -91,17 +127,41 @@ export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   ConnectionsRoute: typeof ConnectionsRoute
   ExtensionRoute: typeof ExtensionRoute
+  InboxRoute: typeof InboxRoute
   OnboardingRoute: typeof OnboardingRoute
+  OverviewRoute: typeof OverviewRoute
+  RequestsRoute: typeof RequestsRoute
   ApiPublicLinkSessionRoute: typeof ApiPublicLinkSessionRoute
 }
 
 declare module '@tanstack/react-router' {
   interface FileRoutesByPath {
+    '/requests': {
+      id: '/requests'
+      path: '/requests'
+      fullPath: '/requests'
+      preLoaderRoute: typeof RequestsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/overview': {
+      id: '/overview'
+      path: '/overview'
+      fullPath: '/overview'
+      preLoaderRoute: typeof OverviewRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/onboarding': {
       id: '/onboarding'
       path: '/onboarding'
       fullPath: '/onboarding'
       preLoaderRoute: typeof OnboardingRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/inbox': {
+      id: '/inbox'
+      path: '/inbox'
+      fullPath: '/inbox'
+      preLoaderRoute: typeof InboxRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/extension': {
@@ -139,7 +199,10 @@ const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   ConnectionsRoute: ConnectionsRoute,
   ExtensionRoute: ExtensionRoute,
+  InboxRoute: InboxRoute,
   OnboardingRoute: OnboardingRoute,
+  OverviewRoute: OverviewRoute,
+  RequestsRoute: RequestsRoute,
   ApiPublicLinkSessionRoute: ApiPublicLinkSessionRoute,
 }
 export const routeTree = rootRouteImport
