@@ -9,38 +9,115 @@
 // Additionally, you should also exclude this file from your linter and/or formatter to prevent it from being checked or modified.
 
 import { Route as rootRouteImport } from './routes/__root'
+import { Route as OnboardingRouteImport } from './routes/onboarding'
+import { Route as ExtensionRouteImport } from './routes/extension'
+import { Route as ConnectionsRouteImport } from './routes/connections'
 import { Route as IndexRouteImport } from './routes/index'
+import { Route as ApiPublicLinkSessionRouteImport } from './routes/api/public/link-session'
 
+const OnboardingRoute = OnboardingRouteImport.update({
+  id: '/onboarding',
+  path: '/onboarding',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ExtensionRoute = ExtensionRouteImport.update({
+  id: '/extension',
+  path: '/extension',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ConnectionsRoute = ConnectionsRouteImport.update({
+  id: '/connections',
+  path: '/connections',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const IndexRoute = IndexRouteImport.update({
   id: '/',
   path: '/',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ApiPublicLinkSessionRoute = ApiPublicLinkSessionRouteImport.update({
+  id: '/api/public/link-session',
+  path: '/api/public/link-session',
+  getParentRoute: () => rootRouteImport,
+} as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
+  '/connections': typeof ConnectionsRoute
+  '/extension': typeof ExtensionRoute
+  '/onboarding': typeof OnboardingRoute
+  '/api/public/link-session': typeof ApiPublicLinkSessionRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
+  '/connections': typeof ConnectionsRoute
+  '/extension': typeof ExtensionRoute
+  '/onboarding': typeof OnboardingRoute
+  '/api/public/link-session': typeof ApiPublicLinkSessionRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
+  '/connections': typeof ConnectionsRoute
+  '/extension': typeof ExtensionRoute
+  '/onboarding': typeof OnboardingRoute
+  '/api/public/link-session': typeof ApiPublicLinkSessionRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
-  fullPaths: '/'
+  fullPaths:
+    | '/'
+    | '/connections'
+    | '/extension'
+    | '/onboarding'
+    | '/api/public/link-session'
   fileRoutesByTo: FileRoutesByTo
-  to: '/'
-  id: '__root__' | '/'
+  to:
+    | '/'
+    | '/connections'
+    | '/extension'
+    | '/onboarding'
+    | '/api/public/link-session'
+  id:
+    | '__root__'
+    | '/'
+    | '/connections'
+    | '/extension'
+    | '/onboarding'
+    | '/api/public/link-session'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
+  ConnectionsRoute: typeof ConnectionsRoute
+  ExtensionRoute: typeof ExtensionRoute
+  OnboardingRoute: typeof OnboardingRoute
+  ApiPublicLinkSessionRoute: typeof ApiPublicLinkSessionRoute
 }
 
 declare module '@tanstack/react-router' {
   interface FileRoutesByPath {
+    '/onboarding': {
+      id: '/onboarding'
+      path: '/onboarding'
+      fullPath: '/onboarding'
+      preLoaderRoute: typeof OnboardingRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/extension': {
+      id: '/extension'
+      path: '/extension'
+      fullPath: '/extension'
+      preLoaderRoute: typeof ExtensionRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/connections': {
+      id: '/connections'
+      path: '/connections'
+      fullPath: '/connections'
+      preLoaderRoute: typeof ConnectionsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/': {
       id: '/'
       path: '/'
@@ -48,11 +125,22 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof IndexRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/api/public/link-session': {
+      id: '/api/public/link-session'
+      path: '/api/public/link-session'
+      fullPath: '/api/public/link-session'
+      preLoaderRoute: typeof ApiPublicLinkSessionRouteImport
+      parentRoute: typeof rootRouteImport
+    }
   }
 }
 
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
+  ConnectionsRoute: ConnectionsRoute,
+  ExtensionRoute: ExtensionRoute,
+  OnboardingRoute: OnboardingRoute,
+  ApiPublicLinkSessionRoute: ApiPublicLinkSessionRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)

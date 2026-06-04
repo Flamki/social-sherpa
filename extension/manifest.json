@@ -1,0 +1,11 @@
+{
+  "manifest_version": 3,
+  "name": "Network Manager — Cookie Bridge",
+  "version": "0.1.0",
+  "description": "Captures your LinkedIn session and links it to your Network Manager workspace. Approval-gated — does not act on its own.",
+  "permissions": ["cookies", "storage", "activeTab"],
+  "host_permissions": ["https://*.linkedin.com/*"],
+  "action": { "default_popup": "popup.html", "default_icon": "icon.png" },
+  "background": { "service_worker": "background.js" },
+  "icons": { "48": "icon.png", "128": "icon.png" }
+}
