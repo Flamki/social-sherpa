@@ -14,7 +14,7 @@ import crockbotLogo from "@/assets/crockbot-logo.png";
 import aiAgentLogo from "@/assets/ai-agent-logo.png";
 
 const nav = [
-  { to: "/", label: "AI Agent", icon: Sparkles, exact: true },
+  { to: "/", label: "AI Agent", icon: aiAgentLogo, exact: true, isImage: true },
   { to: "/connections", label: "Connections", icon: Users },
   { to: "/inbox", label: "Inbox", icon: Inbox, badgeKey: "inbox" as const },
   { to: "/requests", label: "Requests", icon: UserPlus, badgeKey: "requests" as const },
