@@ -1,6 +1,6 @@
 import { Link } from "@tanstack/react-router";
 import { useMemo, useState, useEffect, type ReactNode } from "react";
-import { Sparkles, Users, Inbox, UserPlus, LayoutDashboard, Settings, Chrome, PanelLeftClose, PanelLeft, User, Moon, Sun, LogOut } from "lucide-react";
+import { Users, Inbox, UserPlus, LayoutDashboard, Settings, Chrome, PanelLeftClose, PanelLeft, User, Moon, Sun, LogOut } from "lucide-react";
 import {
   DropdownMenu,
   DropdownMenuTrigger,
@@ -11,9 +11,10 @@ import {
 
 import { useStore, warmupDay, todaysUsage, effectiveCaps } from "@/lib/store";
 import crockbotLogo from "@/assets/crockbot-logo.png";
+import aiAgentLogo from "@/assets/ai-agent-logo.png";
 
 const nav = [
-  { to: "/", label: "AI Agent", icon: Sparkles, exact: true },
+  { to: "/", label: "AI Agent", icon: aiAgentLogo, exact: true, isImage: true },
   { to: "/connections", label: "Connections", icon: Users },
   { to: "/inbox", label: "Inbox", icon: Inbox, badgeKey: "inbox" as const },
   { to: "/requests", label: "Requests", icon: UserPlus, badgeKey: "requests" as const },
@@ -92,6 +93,7 @@ export function AppShell({
           {nav.map((t) => {
             const Icon = t.icon;
             const badge = "badgeKey" in t && t.badgeKey ? badges[t.badgeKey] : 0;
+            const isImage = "isImage" in t && t.isImage;
             return (
               <Link
                 key={t.to}
@@ -108,7 +110,11 @@ export function AppShell({
                 activeOptions={{ exact: "exact" in t ? t.exact : false }}
               >
                 <span className="flex items-center gap-3">
-                  <Icon className="h-4 w-4" />
+                  {isImage ? (
+                    <img src={t.icon as string} alt="" className="h-5 w-5 object-contain" />
+                  ) : (
+                    <Icon className="h-4 w-4" />
+                  )}
                   {!collapsed && t.label}
                 </span>
                 {!collapsed && badge > 0 && (
