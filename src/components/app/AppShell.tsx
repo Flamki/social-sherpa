@@ -115,7 +115,7 @@ export function AppShell({
             </span>
           </div>
         </header>
-        <main className="min-w-0 flex-1 overflow-hidden">{children}</main>
+        <main className="flex min-w-0 flex-1 flex-col overflow-hidden">{children}</main>
       </div>
     </div>
   );

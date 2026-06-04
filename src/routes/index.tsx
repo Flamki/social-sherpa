@@ -91,7 +91,7 @@ function Index() {
           )}
         </div>
       )}
-      <div className="mx-auto flex h-full max-w-3xl flex-col">
+      <div className="mx-auto flex min-h-0 w-full max-w-3xl flex-1 flex-col">
         <ScrollArea className="flex-1">
           <div ref={scrollRef} className="flex flex-col gap-4 px-6 py-6">
             {messages.map((m, i) => (
