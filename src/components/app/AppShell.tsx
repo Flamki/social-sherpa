@@ -1,6 +1,13 @@
 import { Link } from "@tanstack/react-router";
-import { useMemo, useState, type ReactNode } from "react";
-import { Bot, Users, Inbox, UserPlus, LayoutDashboard, Settings, Chrome, PanelLeftClose, PanelLeft } from "lucide-react";
+import { useMemo, useState, useEffect, type ReactNode } from "react";
+import { Bot, Users, Inbox, UserPlus, LayoutDashboard, Settings, Chrome, PanelLeftClose, PanelLeft, User, Moon, Sun, LogOut } from "lucide-react";
+import {
+  DropdownMenu,
+  DropdownMenuTrigger,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+} from "@/components/ui/dropdown-menu";
 
 import { useStore, warmupDay, todaysUsage, effectiveCaps } from "@/lib/store";
 import crockbotLogo from "@/assets/crockbot-logo.png";
@@ -33,6 +40,15 @@ export function AppShell({
   const usage = useMemo(() => todaysUsage(state), [state]);
   const caps = useMemo(() => effectiveCaps(state), [state]);
   const [collapsed, setCollapsed] = useState(false);
+  const [theme, setTheme] = useState<"light" | "dark">(() => {
+    if (typeof window === "undefined") return "light";
+    return (localStorage.getItem("theme") as "light" | "dark") ||
+      (window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light");
+  });
+  useEffect(() => {
+    document.documentElement.classList.toggle("dark", theme === "dark");
+    localStorage.setItem("theme", theme);
+  }, [theme]);
 
   const pending = state.actions.filter((a) => a.status === "pending").length;
   const badges: Record<"inbox" | "requests", number> = {
@@ -128,6 +144,49 @@ export function AppShell({
               </div>
             </div>
           )}
+        </div>
+        <div className="border-t p-2">
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <button
+                type="button"
+                className={`flex w-full items-center gap-2 rounded-md p-2 text-left text-sm hover:bg-muted ${
+                  collapsed ? "justify-center" : ""
+                }`}
+              >
+                <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-primary/10 text-xs font-semibold text-primary">
+                  {(session.profile?.name || "U").slice(0, 1).toUpperCase()}
+                </span>
+                {!collapsed && (
+                  <span className="min-w-0 flex-1">
+                    <span className="block truncate text-sm font-medium text-foreground">
+                      {session.profile?.name || "Your account"}
+                    </span>
+                    <span className="block truncate text-[11px] text-muted-foreground">
+                      {session.profile?.headline || "Signed in"}
+                    </span>
+                  </span>
+                )}
+              </button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent side="top" align="start" className="w-56">
+              <DropdownMenuItem asChild>
+                <Link to="/onboarding">
+                  <User className="h-4 w-4" />
+                  Account
+                </Link>
+              </DropdownMenuItem>
+              <DropdownMenuItem onSelect={(e) => { e.preventDefault(); setTheme(theme === "dark" ? "light" : "dark"); }}>
+                {theme === "dark" ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
+                {theme === "dark" ? "Light mode" : "Dark mode"}
+              </DropdownMenuItem>
+              <DropdownMenuSeparator />
+              <DropdownMenuItem onSelect={() => { localStorage.clear(); window.location.reload(); }}>
+                <LogOut className="h-4 w-4" />
+                Log out
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
         </div>
       </aside>
 
