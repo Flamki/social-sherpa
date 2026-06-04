@@ -42,16 +42,16 @@ export function AppShell({
   return (
     <div className="flex h-screen overflow-hidden bg-muted/30 text-foreground">
       <aside className="hidden w-60 shrink-0 flex-col border-r bg-background md:flex">
-        <div className="relative px-4 py-5">
+        <div className="relative flex h-16 items-center px-4">
           <img
             src={crockbotLogo}
-            alt="CrockBot"
-            className="pointer-events-none absolute left-0 top-1 h-14 w-auto select-none"
+            alt=""
+            aria-hidden="true"
+            className="pointer-events-none absolute inset-x-2 top-1/2 -z-0 h-14 w-[calc(100%-1rem)] -translate-y-1/2 select-none object-contain opacity-60 dark:invert"
           />
-          <span className="relative ml-16 inline-block text-lg font-extrabold tracking-tight">
+          <span className="relative z-10 ml-10 text-lg font-extrabold tracking-tight text-foreground">
             CrockBot
           </span>
-          <span className="pointer-events-none absolute bottom-2 left-16 right-3 h-[2px] rounded-full bg-gradient-to-r from-primary/70 to-transparent" />
         </div>
         <nav className="flex-1 px-3">
           {nav.map((t) => {
