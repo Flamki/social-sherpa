@@ -2,7 +2,7 @@ import { createFileRoute } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
 import { Download, CheckCircle2, AlertTriangle } from "lucide-react";
 
-import { Nav } from "@/components/app/Nav";
+import { AppShell } from "@/components/app/AppShell";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { store, useStore } from "@/lib/store";
@@ -54,10 +54,9 @@ function ExtensionPage() {
   }
 
   return (
-    <div className="min-h-screen bg-background text-foreground">
-      <Nav />
-      <main className="mx-auto max-w-3xl px-6 py-10">
-        <h1 className="text-2xl font-semibold">Connect your LinkedIn session</h1>
+    <AppShell title="Extension">
+      <div className="mx-auto max-w-3xl px-6 py-8">
+        <h2 className="text-lg font-semibold">Connect your LinkedIn session</h2>
         <p className="mt-2 text-sm text-muted-foreground">
           The extension reads your LinkedIn cookies and posts them to your workspace.
           We never log in for you — we use your existing session.
@@ -106,7 +105,7 @@ function ExtensionPage() {
             </p>
           </div>
         </Card>
-      </main>
-    </div>
+      </div>
+    </AppShell>
   );
 }
