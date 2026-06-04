@@ -155,15 +155,15 @@ export function AppShell({
                 }`}
               >
                 <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-primary/10 text-xs font-semibold text-primary">
-                  {(session.profile?.name || "U").slice(0, 1).toUpperCase()}
+                  U
                 </span>
                 {!collapsed && (
                   <span className="min-w-0 flex-1">
                     <span className="block truncate text-sm font-medium text-foreground">
-                      {session.profile?.name || "Your account"}
+                      Your account
                     </span>
                     <span className="block truncate text-[11px] text-muted-foreground">
-                      {session.profile?.headline || "Signed in"}
+                      {session.connected ? "Connected" : "Not connected"}
                     </span>
                   </span>
                 )}
