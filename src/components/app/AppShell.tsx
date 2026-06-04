@@ -1,6 +1,6 @@
 import { Link } from "@tanstack/react-router";
-import { useMemo, type ReactNode } from "react";
-import { Bot, Users, Inbox, UserPlus, LayoutDashboard, Settings, Chrome } from "lucide-react";
+import { useMemo, useState, type ReactNode } from "react";
+import { Bot, Users, Inbox, UserPlus, LayoutDashboard, Settings, Chrome, PanelLeftClose, PanelLeft } from "lucide-react";
 
 import { useStore, warmupDay, todaysUsage, effectiveCaps } from "@/lib/store";
 import crockbotLogo from "@/assets/crockbot-logo.png";
@@ -32,6 +32,7 @@ export function AppShell({
   const day = useMemo(() => warmupDay(state), [state]);
   const usage = useMemo(() => todaysUsage(state), [state]);
   const caps = useMemo(() => effectiveCaps(state), [state]);
+  const [collapsed, setCollapsed] = useState(false);
 
   const pending = state.actions.filter((a) => a.status === "pending").length;
   const badges: Record<"inbox" | "requests", number> = {
@@ -41,17 +42,35 @@ export function AppShell({
 
   return (
     <div className="flex h-screen overflow-hidden bg-muted/30 text-foreground">
-      <aside className="hidden w-60 shrink-0 flex-col border-r bg-background md:flex">
-        <div className="relative flex h-16 items-center px-4">
-          <img
-            src={crockbotLogo}
-            alt=""
-            aria-hidden="true"
-            className="pointer-events-none absolute inset-x-2 top-1/2 -z-0 h-14 w-[calc(100%-1rem)] -translate-y-1/2 select-none object-contain opacity-60 dark:invert"
-          />
-          <span className="relative z-10 ml-10 text-lg font-extrabold tracking-tight text-foreground">
-            CrockBot
-          </span>
+      <aside
+        className={`hidden shrink-0 flex-col border-r bg-background transition-[width] duration-200 md:flex ${
+          collapsed ? "w-14" : "w-60"
+        }`}
+      >
+        <div className="relative flex h-16 items-center px-2">
+          {!collapsed && (
+            <img
+              src={crockbotLogo}
+              alt=""
+              aria-hidden="true"
+              className="pointer-events-none absolute inset-x-2 top-1/2 -z-0 h-14 w-[calc(100%-1rem)] -translate-y-1/2 select-none object-contain opacity-60 dark:invert"
+            />
+          )}
+          {!collapsed && (
+            <span className="relative z-10 ml-10 text-lg font-extrabold tracking-tight text-foreground">
+              CrockBot
+            </span>
+          )}
+          <button
+            type="button"
+            onClick={() => setCollapsed((c) => !c)}
+            aria-label={collapsed ? "Expand sidebar" : "Collapse sidebar"}
+            className={`relative z-10 ml-auto inline-flex h-8 w-8 items-center justify-center rounded-md text-muted-foreground hover:bg-muted hover:text-foreground ${
+              collapsed ? "mx-auto" : ""
+            }`}
+          >
+            {collapsed ? <PanelLeft className="h-4 w-4" /> : <PanelLeftClose className="h-4 w-4" />}
+          </button>
         </div>
         <nav className="flex-1 px-3">
           {nav.map((t) => {
@@ -61,6 +80,7 @@ export function AppShell({
               <Link
                 key={t.to}
                 to={t.to}
+                title={collapsed ? t.label : undefined}
                 className="mb-0.5 flex items-center justify-between gap-3 rounded-md px-3 py-2 text-sm text-muted-foreground transition hover:bg-muted hover:text-foreground"
                 activeProps={{
                   className:
@@ -70,9 +90,9 @@ export function AppShell({
               >
                 <span className="flex items-center gap-3">
                   <Icon className="h-4 w-4" />
-                  {t.label}
+                  {!collapsed && t.label}
                 </span>
-                {badge > 0 && (
+                {!collapsed && badge > 0 && (
                   <span className="flex h-5 min-w-5 items-center justify-center rounded-full bg-primary px-1.5 text-[10px] font-semibold text-primary-foreground">
                     {badge}
                   </span>
@@ -88,6 +108,7 @@ export function AppShell({
               <Link
                 key={t.to}
                 to={t.to}
+                title={collapsed ? t.label : undefined}
                 className="mb-0.5 flex items-center gap-3 rounded-md px-3 py-2 text-xs text-muted-foreground transition hover:bg-muted hover:text-foreground"
                 activeProps={{
                   className:
@@ -95,16 +116,18 @@ export function AppShell({
                 }}
               >
                 <Icon className="h-3.5 w-3.5" />
-                {t.label}
+                {!collapsed && t.label}
               </Link>
             );
           })}
-          <div className="mt-2 px-3 text-[10px] leading-relaxed text-muted-foreground">
-            {day > 0 && <div>Warmup day {day}/14</div>}
-            <div>
-              Today {usage.invites}/{caps.invitesPerDay} inv · {usage.messages}/{caps.messagesPerDay} msg
+          {!collapsed && (
+            <div className="mt-2 px-3 text-[10px] leading-relaxed text-muted-foreground">
+              {day > 0 && <div>Warmup day {day}/14</div>}
+              <div>
+                Today {usage.invites}/{caps.invitesPerDay} inv · {usage.messages}/{caps.messagesPerDay} msg
+              </div>
             </div>
-          </div>
+          )}
         </div>
       </aside>
 
