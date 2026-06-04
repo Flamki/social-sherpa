@@ -1,6 +1,6 @@
 import { Link } from "@tanstack/react-router";
 import { useMemo, useState, useEffect, type ReactNode } from "react";
-import { Bot, Users, Inbox, UserPlus, LayoutDashboard, Settings, Chrome, PanelLeftClose, PanelLeft, User, Moon, Sun, LogOut } from "lucide-react";
+import { Sparkles, Users, Inbox, UserPlus, LayoutDashboard, Settings, Chrome, PanelLeftClose, PanelLeft, User, Moon, Sun, LogOut } from "lucide-react";
 import {
   DropdownMenu,
   DropdownMenuTrigger,
@@ -13,7 +13,7 @@ import { useStore, warmupDay, todaysUsage, effectiveCaps } from "@/lib/store";
 import crockbotLogo from "@/assets/crockbot-logo.png";
 
 const nav = [
-  { to: "/", label: "AI Agent", icon: Bot, exact: true },
+  { to: "/", label: "AI Agent", icon: Sparkles, exact: true },
   { to: "/connections", label: "Connections", icon: Users },
   { to: "/inbox", label: "Inbox", icon: Inbox, badgeKey: "inbox" as const },
   { to: "/requests", label: "Requests", icon: UserPlus, badgeKey: "requests" as const },
@@ -125,10 +125,13 @@ export function AppShell({
                 key={t.to}
                 to={t.to}
                 title={collapsed ? t.label : undefined}
-                className="mb-0.5 flex items-center gap-3 rounded-md px-3 py-2 text-xs text-muted-foreground transition hover:bg-muted hover:text-foreground"
+                className={`mb-0.5 flex items-center gap-3 rounded-md py-2 text-xs text-muted-foreground transition hover:bg-muted hover:text-foreground ${
+                  collapsed ? "justify-center px-0" : "px-3"
+                }`}
                 activeProps={{
-                  className:
-                    "mb-0.5 flex items-center gap-3 rounded-md px-3 py-2 text-xs bg-muted text-foreground",
+                  className: `mb-0.5 flex items-center gap-3 rounded-md py-2 text-xs bg-muted text-foreground ${
+                    collapsed ? "justify-center px-0" : "px-3"
+                  }`,
                 }}
               >
                 <Icon className="h-3.5 w-3.5" />
