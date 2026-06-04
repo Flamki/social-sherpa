@@ -111,7 +111,7 @@ export function AppShell({
               >
                 <span className="flex items-center gap-3">
                   {isImage ? (
-                    <img src={Icon} alt="" className="h-5 w-5 object-contain" />
+                    <img src={t.icon as string} alt="" className="h-5 w-5 object-contain" />
                   ) : (
                     <Icon className="h-4 w-4" />
                   )}
