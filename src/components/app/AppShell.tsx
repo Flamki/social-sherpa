@@ -39,7 +39,7 @@ export function AppShell({
   };
 
   return (
-    <div className="flex min-h-screen bg-muted/30 text-foreground">
+    <div className="flex h-screen overflow-hidden bg-muted/30 text-foreground">
       <aside className="hidden w-60 shrink-0 flex-col border-r bg-background md:flex">
         <div className="flex items-center gap-2 px-5 py-5">
           <div className="flex h-8 w-8 items-center justify-center rounded-md bg-primary text-primary-foreground">
@@ -115,7 +115,7 @@ export function AppShell({
             </span>
           </div>
         </header>
-        <main className="min-w-0 flex-1">{children}</main>
+        <main className="min-w-0 flex-1 overflow-hidden">{children}</main>
       </div>
     </div>
   );
