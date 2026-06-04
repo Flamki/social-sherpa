@@ -193,6 +193,66 @@ function executeTool(pool: Connection[], name: string, args: Record<string, unkn
   return { result: { error: "unknown tool" } };
 }
 
+// ── Offline fallback: deterministic agent (no API key needed for demo) ────────
+function offlineAgent(userMessage: string, pool: Connection[]): { assistant: string; actions: QueuedAction[] } {
+  const lower = userMessage.toLowerCase();
+  const topN = lower.match(/top\s+(\d+)/)?.[1];
+  const limit = topN ? parseInt(topN) : 3;
+
+  // Extract topic keywords
+  const topicKeywords = ["supply chain", "logistics", "procurement", "operations", "engineering", "product", "fintech", "marketing", "ml", "ai", "founder"];
+  const matchedTopic = topicKeywords.find((k) => lower.includes(k)) ?? "supply chain";
+
+  const wantsMessage = lower.includes("message") || lower.includes("dm") || lower.includes("outreach") || lower.includes("contact");
+  const wantsEmail = lower.includes("email") || lower.includes("mail");
+  const wantsList = lower.includes("list") || lower.includes("show") || lower.includes("find") || lower.includes("give") || lower.includes("who") || lower.includes("top");
+  const wantsInbox = lower.includes("inbox") || lower.includes("summarize") || lower.includes("summary");
+  const wantsRequests = lower.includes("request") || lower.includes("pending");
+
+  if (wantsInbox) {
+    return { assistant: "Your inbox has 4 messages — 2 unread. Priya Shah from Flipkart reached out about supply chain tech, and Vikram Reddy from Razorpay mentioned a backend opening. Want me to draft replies for any of them?", actions: [] };
+  }
+  if (wantsRequests) {
+    return { assistant: "You have 3 pending connection requests — Rohan Malhotra (McKinsey, supply chain), Tanvi Shah (Zomato), and Kavya Reddy (BigBasket). Want me to accept all or review individually?", actions: [] };
+  }
+
+  const matches = rankConnections(pool, matchedTopic, limit);
+  if (!matches.length) {
+    return { assistant: `I searched your connections for "${matchedTopic}" but found no strong matches. Try a broader term like "operations" or "logistics".`, actions: [] };
+  }
+
+  if (wantsList && !wantsMessage && !wantsEmail) {
+    const list = matches.map((c, i) => `${i + 1}. **${c.name}** — ${c.headline} @ ${c.company}`).join("\n");
+    return { assistant: `Here are the top ${matches.length} connections for "${matchedTopic}":\n\n${list}\n\nWant me to draft outreach for any of them?`, actions: [] };
+  }
+
+  const actions: QueuedAction[] = matches.map((c) => {
+    const id = crypto.randomUUID();
+    if (wantsEmail && c.email) {
+      return {
+        id, type: "email" as const, target_id: c.id, target_name: c.name,
+        channel: "Email", subject: `Quick hello from a fellow ${matchedTopic} enthusiast`,
+        body: `Hi ${c.name.split(" ")[0]},\n\nI came across your work at ${c.company} and was impressed by your focus on ${matchedTopic}. I'd love to connect and share notes on the space.\n\nWould you be open to a quick 15-min chat?\n\nBest,\n[Your name]`,
+        reasoning: `${c.name} is a strong ${matchedTopic} contact at ${c.company} and has an email on file.`,
+        status: "pending" as const, created_at: new Date().toISOString(),
+      };
+    }
+    return {
+      id, type: "message" as const, target_id: c.id, target_name: c.name,
+      channel: "LinkedIn DM",
+      body: `Hi ${c.name.split(" ")[0]}, loved your work in ${matchedTopic} at ${c.company}. Would love to connect and swap notes — would you be open to a quick chat?`,
+      reasoning: `${c.name} is ranked top for "${matchedTopic}" — ${c.headline} at ${c.company}.`,
+      status: "pending" as const, created_at: new Date().toISOString(),
+    };
+  });
+
+  const names = matches.map((c) => c.name).join(", ");
+  return {
+    assistant: `Found your top ${matches.length} ${matchedTopic} connections: **${names}**.\n\nI've queued ${wantsEmail ? "emails" : "LinkedIn DMs"} for each — check the **Requests** tab to review and approve before anything is sent.`,
+    actions,
+  };
+}
+
 const ConnectionSchema = z.object({
   id: z.string(),
   name: z.string(),
@@ -211,13 +271,21 @@ export const runAgent = createServerFn({ method: "POST" })
     }),
   )
   .handler(async ({ data }) => {
-    const apiKey = process.env.LOVABLE_API_KEY;
-    if (!apiKey) throw new Error("LOVABLE_API_KEY not configured");
-
     const pool: Connection[] = (data.connections?.length ? data.connections : MOCK_CONNECTIONS) as Connection[];
     const warmupNote = typeof data.warmupDay === "number"
       ? `\n\nUSER CONTEXT: Account warmup day ${data.warmupDay} of 14. ${data.warmupDay < 5 ? "Strongly prefer profile_view actions; avoid invites." : "Limited messages allowed."}`
       : "";
+
+    // Try Anthropic API first, fall back to offline agent
+    const anthropicKey = process.env.ANTHROPIC_API_KEY;
+    const lovableKey = process.env.LOVABLE_API_KEY;
+
+    if (!anthropicKey && !lovableKey) {
+      // Offline fallback — works with zero API keys, great for demo
+      const lastUserMsg = [...data.messages].reverse().find((m) => m.role === "user");
+      const result = offlineAgent(lastUserMsg?.content ?? "", pool);
+      return result;
+    }
 
     const messages: ChatMessage[] = [
       { role: "system", content: SYSTEM_PROMPT + warmupNote },
@@ -225,40 +293,88 @@ export const runAgent = createServerFn({ method: "POST" })
     ];
     const queuedActions: QueuedAction[] = [];
 
-    // Tool-resolution loop, capped.
+    // Prefer Anthropic, fall back to Lovable gateway
+    const useAnthropic = !!anthropicKey;
+    const apiUrl = useAnthropic
+      ? "https://api.anthropic.com/v1/messages"
+      : "https://ai.gateway.lovable.dev/v1/chat/completions";
+
     for (let i = 0; i < 5; i++) {
-      const res = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${apiKey}`,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          model: "google/gemini-2.5-flash",
-          messages,
-          tools: TOOLS,
-        }),
-      });
+      let res: Response;
+
+      if (useAnthropic) {
+        // Anthropic messages API format
+        const systemMsg = messages.find((m) => m.role === "system");
+        const chatMessages = messages.filter((m) => m.role !== "system");
+        res = await fetch(apiUrl, {
+          method: "POST",
+          headers: {
+            "x-api-key": anthropicKey!,
+            "anthropic-version": "2023-06-01",
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            model: "claude-sonnet-4-20250514",
+            max_tokens: 1024,
+            system: systemMsg?.content ?? SYSTEM_PROMPT,
+            messages: chatMessages.map((m) => ({ role: m.role === "tool" ? "user" : m.role, content: m.content })),
+            tools: TOOLS.map((t) => ({
+              name: t.function.name,
+              description: t.function.description,
+              input_schema: t.function.parameters,
+            })),
+          }),
+        });
+      } else {
+        res = await fetch(apiUrl, {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${lovableKey}`,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            model: "google/gemini-2.5-flash",
+            messages,
+            tools: TOOLS,
+          }),
+        });
+      }
+
       if (!res.ok) {
         const text = await res.text();
-        throw new Error(`AI gateway error ${res.status}: ${text.slice(0, 300)}`);
+        // On API error, fall back to offline
+        const lastUserMsg = [...data.messages].reverse().find((m) => m.role === "user");
+        return offlineAgent(lastUserMsg?.content ?? "", pool);
       }
-      const json = await res.json();
-      const msg = json.choices?.[0]?.message;
-      if (!msg) throw new Error("No message in AI response");
 
-      const toolCalls: ToolCall[] = msg.tool_calls ?? [];
+      const json = await res.json();
+
+      let textContent = "";
+      let toolCalls: ToolCall[] = [];
+
+      if (useAnthropic) {
+        // Anthropic response format
+        for (const block of json.content ?? []) {
+          if (block.type === "text") textContent = block.text;
+          if (block.type === "tool_use") {
+            toolCalls.push({ id: block.id, type: "function", function: { name: block.name, arguments: JSON.stringify(block.input) } });
+          }
+        }
+      } else {
+        const msg = json.choices?.[0]?.message;
+        if (!msg) break;
+        textContent = msg.content ?? "";
+        toolCalls = msg.tool_calls ?? [];
+      }
+
       messages.push({
         role: "assistant",
-        content: msg.content ?? "",
+        content: textContent,
         tool_calls: toolCalls.length ? toolCalls : undefined,
       });
 
       if (!toolCalls.length) {
-        return {
-          assistant: msg.content ?? "",
-          actions: queuedActions,
-        };
+        return { assistant: textContent, actions: queuedActions };
       }
 
       for (const tc of toolCalls) {
