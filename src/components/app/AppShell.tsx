@@ -97,10 +97,13 @@ export function AppShell({
                 key={t.to}
                 to={t.to}
                 title={collapsed ? t.label : undefined}
-                className="mb-0.5 flex items-center justify-between gap-3 rounded-md px-3 py-2 text-sm text-muted-foreground transition hover:bg-muted hover:text-foreground"
+                className={`mb-0.5 flex items-center justify-between gap-3 rounded-md py-2 text-sm text-muted-foreground transition hover:bg-muted hover:text-foreground ${
+                  collapsed ? "justify-center px-0" : "px-3"
+                }`}
                 activeProps={{
-                  className:
-                    "mb-0.5 flex items-center justify-between gap-3 rounded-md px-3 py-2 text-sm bg-primary/10 text-primary font-medium",
+                  className: `mb-0.5 flex items-center justify-between gap-3 rounded-md py-2 text-sm bg-primary/10 text-primary font-medium ${
+                    collapsed ? "justify-center px-0" : "px-3"
+                  }`,
                 }}
                 activeOptions={{ exact: "exact" in t ? t.exact : false }}
               >
