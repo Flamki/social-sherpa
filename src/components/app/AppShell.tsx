@@ -43,9 +43,15 @@ export function AppShell({
       <aside className="hidden w-60 shrink-0 flex-col border-r bg-background md:flex">
         <div className="flex items-center gap-2 px-5 py-5">
           <div className="flex h-8 w-8 items-center justify-center rounded-md bg-primary text-primary-foreground">
-            <span className="text-sm font-bold">N</span>
+            <svg viewBox="0 0 24 24" fill="currentColor" className="h-5 w-5">
+              <path d="M2 15c1.5-2 4-3 7-3s5.5 1 7 3c.5.7.5 1.5 0 2.2-.3.5-.8.8-1.3.8H3.3c-.5 0-1-.3-1.3-.8-.5-.7-.5-1.5 0-2.2z" />
+              <circle cx="6" cy="12" r="1.5" />
+              <circle cx="10" cy="12" r="1.5" />
+              <path d="M16 13c2 0 3.5.5 4.5 1.5.5.5.5 1.2 0 1.7-.3.3-.7.5-1.1.5h-.8" stroke="currentColor" strokeWidth="1.5" fill="none" />
+              <path d="M17.5 13.5c1-.5 2.5-.5 3.5 0" stroke="currentColor" strokeWidth="1.2" fill="none" strokeLinecap="round" />
+            </svg>
           </div>
-          <span className="text-sm font-semibold">NetManager</span>
+          <span className="text-sm font-semibold">CrockBot</span>
         </div>
         <nav className="flex-1 px-3">
           {nav.map((t) => {
