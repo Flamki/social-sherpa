@@ -1,5 +1,5 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { useServerFn } from "@tanstack/react-start";
 import { Send } from "lucide-react";
 
@@ -7,7 +7,6 @@ import { runAgent } from "@/lib/agent.functions";
 import { AppShell } from "@/components/app/AppShell";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { ScrollArea } from "@/components/ui/scroll-area";
 import { addActions, startWorker, useStore, warmupDay, type Action } from "@/lib/store";
 
 export const Route = createFileRoute("/")({
@@ -48,8 +47,32 @@ function Index() {
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
+  const [activeSeg, setActiveSeg] = useState(0);
 
   useEffect(() => { startWorker(); }, []);
+
+  // Auto-scroll to bottom whenever messages or loading state change
+  useLayoutEffect(() => {
+    const el = scrollRef.current;
+    if (!el) return;
+    el.scrollTo({ top: el.scrollHeight, behavior: "smooth" });
+  }, [messages, loading]);
+
+  // Track which segment (message) is currently in view for the scrollbar dots
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (!el) return;
+    const onScroll = () => {
+      const ratio = el.scrollHeight <= el.clientHeight
+        ? 1
+        : el.scrollTop / (el.scrollHeight - el.clientHeight);
+      const total = Math.max(1, messages.length);
+      setActiveSeg(Math.min(total - 1, Math.round(ratio * (total - 1))));
+    };
+    onScroll();
+    el.addEventListener("scroll", onScroll, { passive: true });
+    return () => el.removeEventListener("scroll", onScroll);
+  }, [messages.length]);
 
   async function send(override?: string) {
     const text = (override ?? input).trim();
@@ -74,7 +97,6 @@ function Index() {
       setMessages([...next, { role: "assistant", content: `Error: ${(e as Error).message}` }]);
     } finally {
       setLoading(false);
-      setTimeout(() => scrollRef.current?.scrollTo({ top: 9e9, behavior: "smooth" }), 50);
     }
   }
 
@@ -92,8 +114,12 @@ function Index() {
         </div>
       )}
       <div className="mx-auto flex min-h-0 w-full max-w-3xl flex-1 flex-col">
-        <ScrollArea className="flex-1">
-          <div ref={scrollRef} className="flex flex-col gap-4 px-6 py-6">
+        <div className="relative flex min-h-0 flex-1">
+          <div
+            ref={scrollRef}
+            className="flex-1 overflow-y-auto scroll-smooth [&::-webkit-scrollbar]:hidden [scrollbar-width:none]"
+          >
+            <div className="flex flex-col gap-4 px-6 py-6">
             {messages.map((m, i) => (
               <div key={i} className={`flex gap-3 ${m.role === "user" ? "flex-row-reverse" : ""}`}>
                 <div
@@ -135,8 +161,24 @@ function Index() {
                 <div className="rounded-2xl bg-muted px-4 py-2.5 text-sm text-muted-foreground">Thinking…</div>
               </div>
             )}
+            </div>
           </div>
-        </ScrollArea>
+          {messages.length > 1 && (
+            <div
+              aria-hidden="true"
+              className="pointer-events-none absolute inset-y-4 right-1.5 flex w-1 flex-col items-stretch justify-center gap-1"
+            >
+              {messages.map((_, i) => (
+                <span
+                  key={i}
+                  className={`h-0.5 w-full rounded-full transition-colors ${
+                    i === activeSeg ? "bg-foreground" : "bg-muted-foreground/30"
+                  }`}
+                />
+              ))}
+            </div>
+          )}
+        </div>
         <div className="border-t bg-background px-6 py-4">
           <div className="flex gap-2">
             <Input
