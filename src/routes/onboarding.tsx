@@ -2,7 +2,7 @@ import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useState } from "react";
 import { ArrowRight, ShieldAlert, CheckCircle2 } from "lucide-react";
 
-import { Nav } from "@/components/app/Nav";
+import { AppShell } from "@/components/app/AppShell";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -28,9 +28,8 @@ function Onboarding() {
   const [acked, setAcked] = useState(false);
 
   return (
-    <div className="min-h-screen bg-background">
-      <Nav />
-      <main className="mx-auto max-w-3xl px-6 py-10">
+    <AppShell title="Onboarding">
+      <div className="mx-auto max-w-3xl px-6 py-8">
         <div className="mb-6 flex items-center gap-2 text-xs text-muted-foreground">
           {["Connect", "Daily caps", "Warmup schedule", "Risk ack"].map((label, i) => (
             <div key={label} className="flex items-center gap-2">
@@ -157,7 +156,7 @@ function Onboarding() {
             </div>
           </Card>
         )}
-      </main>
-    </div>
+      </div>
+    </AppShell>
   );
 }
