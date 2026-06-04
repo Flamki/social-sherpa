@@ -15,7 +15,7 @@ export type ChatMessage = z.infer<typeof MessageSchema>;
 
 export type QueuedAction = {
   id: string;
-  type: "connection_request" | "message" | "email";
+  type: "connection_request" | "message" | "email" | "profile_view";
   target_id: string;
   target_name: string;
   channel: string;
@@ -36,12 +36,13 @@ IMPORTANT RULES:
 - Personalize every message using the connection's company/headline.
 - Keep DMs under 300 chars, emails under 150 words.
 - When the user asks for "top N" people, rank by tag relevance and seniority signals in headline.
-- After queueing actions, briefly tell the user what you queued and ask them to review the approval panel.`;
+- After queueing actions, briefly tell the user what you queued and ask them to review the approval panel.
+- If the user is in account warmup (early days), prefer queue_profile_view to gently warm targets before messaging.`;
 
-function rankConnections(query: string, limit: number): Connection[] {
+function rankConnections(pool: Connection[], query: string, limit: number): Connection[] {
   const q = query.toLowerCase();
   const terms = q.split(/\s+/).filter(Boolean);
-  const scored = MOCK_CONNECTIONS.map((c) => {
+  const scored = pool.map((c) => {
     const hay = `${c.name} ${c.headline} ${c.company} ${c.tags.join(" ")}`.toLowerCase();
     let score = 0;
     for (const t of terms) {
@@ -122,22 +123,37 @@ const TOOLS = [
       },
     },
   },
+  {
+    type: "function",
+    function: {
+      name: "queue_profile_view",
+      description: "Queue a soft 'profile view' of a 1st-degree connection. Useful during account warmup before sending messages.",
+      parameters: {
+        type: "object",
+        properties: {
+          target_id: { type: "string" },
+          reasoning: { type: "string" },
+        },
+        required: ["target_id", "reasoning"],
+      },
+    },
+  },
 ];
 
 type ToolCall = { id: string; type: "function"; function: { name: string; arguments: string } };
 
-function executeTool(name: string, args: Record<string, unknown>): {
+function executeTool(pool: Connection[], name: string, args: Record<string, unknown>): {
   result: unknown;
   action?: QueuedAction;
 } {
   if (name === "search_connections") {
-    const matches = rankConnections(String(args.query ?? ""), Number(args.limit ?? 5));
+    const matches = rankConnections(pool, String(args.query ?? ""), Number(args.limit ?? 5));
     return { result: { matches } };
   }
   const id = crypto.randomUUID();
   const created_at = new Date().toISOString();
   if (name === "queue_linkedin_message") {
-    const target = MOCK_CONNECTIONS.find((c) => c.id === args.target_id);
+    const target = pool.find((c) => c.id === args.target_id);
     if (!target) return { result: { error: "connection not found" } };
     const action: QueuedAction = {
       id, type: "message", target_id: target.id, target_name: target.name,
@@ -147,7 +163,7 @@ function executeTool(name: string, args: Record<string, unknown>): {
     return { result: { queued: true, action_id: id }, action };
   }
   if (name === "queue_email") {
-    const target = MOCK_CONNECTIONS.find((c) => c.id === args.target_id);
+    const target = pool.find((c) => c.id === args.target_id);
     if (!target) return { result: { error: "connection not found" } };
     const action: QueuedAction = {
       id, type: "email", target_id: target.id, target_name: target.name,
@@ -164,17 +180,47 @@ function executeTool(name: string, args: Record<string, unknown>): {
     };
     return { result: { queued: true, action_id: id }, action };
   }
+  if (name === "queue_profile_view") {
+    const target = pool.find((c) => c.id === args.target_id);
+    if (!target) return { result: { error: "connection not found" } };
+    const action: QueuedAction = {
+      id, type: "profile_view", target_id: target.id, target_name: target.name,
+      channel: "LinkedIn Profile View", body: "(silent profile view)",
+      reasoning: String(args.reasoning), status: "pending", created_at,
+    };
+    return { result: { queued: true, action_id: id }, action };
+  }
   return { result: { error: "unknown tool" } };
 }
 
+const ConnectionSchema = z.object({
+  id: z.string(),
+  name: z.string(),
+  headline: z.string(),
+  company: z.string(),
+  location: z.string().optional().default(""),
+  tags: z.array(z.string()),
+});
+
 export const runAgent = createServerFn({ method: "POST" })
-  .inputValidator(z.object({ messages: z.array(MessageSchema).min(1).max(50) }))
+  .inputValidator(
+    z.object({
+      messages: z.array(MessageSchema).min(1).max(50),
+      connections: z.array(ConnectionSchema).max(5000).optional(),
+      warmupDay: z.number().min(0).max(14).optional(),
+    }),
+  )
   .handler(async ({ data }) => {
     const apiKey = process.env.LOVABLE_API_KEY;
     if (!apiKey) throw new Error("LOVABLE_API_KEY not configured");
 
+    const pool: Connection[] = (data.connections?.length ? data.connections : MOCK_CONNECTIONS) as Connection[];
+    const warmupNote = typeof data.warmupDay === "number"
+      ? `\n\nUSER CONTEXT: Account warmup day ${data.warmupDay} of 14. ${data.warmupDay < 5 ? "Strongly prefer profile_view actions; avoid invites." : "Limited messages allowed."}`
+      : "";
+
     const messages: ChatMessage[] = [
-      { role: "system", content: SYSTEM_PROMPT },
+      { role: "system", content: SYSTEM_PROMPT + warmupNote },
       ...data.messages,
     ];
     const queuedActions: QueuedAction[] = [];
@@ -218,7 +264,7 @@ export const runAgent = createServerFn({ method: "POST" })
       for (const tc of toolCalls) {
         let parsedArgs: Record<string, unknown> = {};
         try { parsedArgs = JSON.parse(tc.function.arguments || "{}"); } catch { /* noop */ }
-        const { result, action } = executeTool(tc.function.name, parsedArgs);
+        const { result, action } = executeTool(pool, tc.function.name, parsedArgs);
         if (action) queuedActions.push(action);
         messages.push({
           role: "tool",
