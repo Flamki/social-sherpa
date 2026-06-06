@@ -88,9 +88,7 @@ function ConnectionsPage() {
   const [headful, setHeadful] = useState(false);
   const [proxyTest, setProxyTest] = useState<"idle" | "testing" | "ok" | "err">("idle");
   const [proxyTestMsg, setProxyTestMsg] = useState("");
-  const cookieImportHostedDisabled =
-    typeof window !== "undefined" &&
-    !["localhost", "127.0.0.1", "::1"].includes(window.location.hostname);
+  const [cookieImportHostedDisabled, setCookieImportHostedDisabled] = useState(false);
 
   function currentCookies() {
     return session.cookies || { li_at: liAt, JSESSIONID: jSessionId };
@@ -174,6 +172,12 @@ function ConnectionsPage() {
       setStatusMsg(res.error);
     }
   }
+
+  useEffect(() => {
+    setCookieImportHostedDisabled(
+      !["localhost", "127.0.0.1", "::1"].includes(window.location.hostname),
+    );
+  }, []);
 
   useEffect(() => {
     if (importOp.status !== "running" || !importOp.jobId) return;
