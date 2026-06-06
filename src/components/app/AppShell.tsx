@@ -1,6 +1,18 @@
 import { Link } from "@tanstack/react-router";
 import { useMemo, useState, useEffect, type ReactNode } from "react";
-import { Users, Inbox, UserPlus, LayoutDashboard, Settings, Chrome, PanelLeftClose, PanelLeft, User, Moon, Sun, LogOut, MessageSquareText } from "lucide-react";
+import {
+  Users,
+  UserPlus,
+  LayoutDashboard,
+  Settings,
+  PanelLeftClose,
+  PanelLeft,
+  User,
+  Moon,
+  Sun,
+  LogOut,
+  MessageSquareText,
+} from "lucide-react";
 import {
   DropdownMenu,
   DropdownMenuTrigger,
@@ -16,15 +28,11 @@ import { LinkedInSignInDialog } from "@/components/app/LinkedInSignInDialog";
 const nav = [
   { to: "/", label: "AI Agent", icon: MessageSquareText, exact: true },
   { to: "/connections", label: "Connections", icon: Users },
-  { to: "/inbox", label: "Inbox", icon: Inbox, badgeKey: "inbox" as const },
   { to: "/requests", label: "Requests", icon: UserPlus, badgeKey: "requests" as const },
   { to: "/overview", label: "Overview", icon: LayoutDashboard },
 ] as const;
 
-const footerNav = [
-  { to: "/onboarding", label: "Onboarding", icon: Settings },
-  { to: "/extension", label: "Extension", icon: Chrome },
-] as const;
+const footerNav = [{ to: "/onboarding", label: "Onboarding", icon: Settings }] as const;
 
 export function AppShell({
   title,
@@ -43,8 +51,10 @@ export function AppShell({
   const [collapsed, setCollapsed] = useState(false);
   const [theme, setTheme] = useState<"light" | "dark">(() => {
     if (typeof window === "undefined") return "light";
-    return (localStorage.getItem("theme") as "light" | "dark") ||
-      (window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light");
+    return (
+      (localStorage.getItem("theme") as "light" | "dark") ||
+      (window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light")
+    );
   });
   useEffect(() => {
     document.documentElement.classList.toggle("dark", theme === "dark");
@@ -52,8 +62,7 @@ export function AppShell({
   }, [theme]);
 
   const pending = state.actions.filter((a) => a.status === "pending").length;
-  const badges: Record<"inbox" | "requests", number> = {
-    inbox: state.actions.filter((a) => a.status === "sent").length,
+  const badges: Record<"requests", number> = {
     requests: pending,
   };
 
@@ -147,7 +156,8 @@ export function AppShell({
             <div className="mt-2 px-3 text-[10px] leading-relaxed text-muted-foreground">
               {day > 0 && <div>Warmup day {day}/14</div>}
               <div>
-                Today {usage.invites}/{caps.invitesPerDay} inv · {usage.messages}/{caps.messagesPerDay} msg
+                Today {usage.invites}/{caps.invitesPerDay} inv · {usage.messages}/
+                {caps.messagesPerDay} msg
               </div>
             </div>
           )}
@@ -183,12 +193,22 @@ export function AppShell({
                   Account
                 </Link>
               </DropdownMenuItem>
-              <DropdownMenuItem onSelect={(e) => { e.preventDefault(); setTheme(theme === "dark" ? "light" : "dark"); }}>
+              <DropdownMenuItem
+                onSelect={(e) => {
+                  e.preventDefault();
+                  setTheme(theme === "dark" ? "light" : "dark");
+                }}
+              >
                 {theme === "dark" ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
                 {theme === "dark" ? "Light mode" : "Dark mode"}
               </DropdownMenuItem>
               <DropdownMenuSeparator />
-              <DropdownMenuItem onSelect={() => { localStorage.clear(); window.location.reload(); }}>
+              <DropdownMenuItem
+                onSelect={() => {
+                  localStorage.clear();
+                  window.location.reload();
+                }}
+              >
                 <LogOut className="h-4 w-4" />
                 Log out
               </DropdownMenuItem>

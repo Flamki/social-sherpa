@@ -12,4 +12,15 @@ export default defineConfig({
     // nitro/vite builds from this
     server: { entry: "server" },
   },
+  // patchright + its native chromium driver must NOT be bundled by Vite/Nitro SSR.
+  // Keep them as runtime requires on the server (they're only imported inside
+  // server functions, never in the client). This fixes the chromium-bidi resolve error.
+  vite: {
+    ssr: {
+      external: ["patchright", "patchright-core", "playwright", "playwright-core", "chromium-bidi"],
+    },
+    optimizeDeps: {
+      exclude: ["patchright", "patchright-core", "playwright", "playwright-core", "chromium-bidi"],
+    },
+  },
 });

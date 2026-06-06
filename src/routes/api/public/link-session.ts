@@ -4,7 +4,12 @@ import { z } from "zod";
 // In-memory bridge: the extension POSTs the cookies here; the frontend polls
 // /api/public/link-session?check=1 to pick them up. v0 is single-tenant demo only;
 // production must scope by signed workspace token and store server-side.
-let last: { capturedAt: string; userAgent: string; hasLiAt: boolean } | null = null;
+let last: {
+  capturedAt: string;
+  userAgent: string;
+  hasLiAt: boolean;
+  cookies: Record<string, string>;
+} | null = null;
 
 const BodySchema = z.object({
   cookies: z.record(z.string().min(1).max(64), z.string().max(8192)),
@@ -27,10 +32,16 @@ export const Route = createFileRoute("/api/public/link-session")({
       GET: async ({ request }) => {
         const url = new URL(request.url);
         if (url.searchParams.get("check") === "1") {
-          return new Response(JSON.stringify({ linked: !!last, last }), {
-            status: 200,
-            headers: { "Content-Type": "application/json", ...cors() },
-          });
+          return new Response(
+            JSON.stringify({
+              linked: !!last,
+              last: last ? { ...last, cookies: last.cookies } : null,
+            }),
+            {
+              status: 200,
+              headers: { "Content-Type": "application/json", ...cors() },
+            },
+          );
         }
         return new Response("ok", { status: 200, headers: cors() });
       },
@@ -44,6 +55,7 @@ export const Route = createFileRoute("/api/public/link-session")({
         last = {
           capturedAt: parsed.capturedAt,
           userAgent: parsed.userAgent,
+          cookies: parsed.cookies,
           hasLiAt: typeof parsed.cookies.li_at === "string" && parsed.cookies.li_at.length > 10,
         };
         return new Response(JSON.stringify({ ok: true }), {

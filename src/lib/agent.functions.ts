@@ -2,6 +2,7 @@ import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
 
 import { MOCK_CONNECTIONS, type Connection } from "../lib/mockConnections";
+import { enqueueAction, readQueueActions } from "@/lib/action.queue";
 
 const MessageSchema = z.object({
   role: z.enum(["system", "user", "assistant", "tool"]),
@@ -18,6 +19,7 @@ export type QueuedAction = {
   type: "connection_request" | "message" | "email" | "profile_view";
   target_id: string;
   target_name: string;
+  target_url?: string;
   channel: string;
   subject?: string;
   body: string;
@@ -28,30 +30,115 @@ export type QueuedAction = {
 
 const SYSTEM_PROMPT = `You are a LinkedIn Network Manager agent for the user.
 You help the user search their LinkedIn connections, draft personalized outreach,
-and queue actions (connection requests, DMs, emails) for human approval.
+and queue actions (connection requests, DMs, emails, profile views) for human approval.
 
 IMPORTANT RULES:
-- You NEVER send anything directly. Every outreach action you take is queued for the user to approve.
+- You NEVER send anything directly to LinkedIn in real-time. Every action you propose must be queued for the user to approve.
+- Once the user approves an action in the "Requests" tab/panel, our automated background worker processes and sends it automatically. Do NOT tell the user to copy-paste messages or visit profiles manually if they have approved the actions; explain that the background worker will handle them.
 - Always search connections first before drafting.
 - Personalize every message using the connection's company/headline.
 - Keep DMs under 300 chars, emails under 150 words.
 - When the user asks for "top N" people, rank by tag relevance and seniority signals in headline.
-- After queueing actions, briefly tell the user what you queued and ask them to review the approval panel.
-- If the user is in account warmup (early days), prefer queue_profile_view to gently warm targets before messaging.`;
+- After queueing actions, briefly tell the user what you queued and ask them to review the "Requests" tab to approve them.
+- If the user is in account warmup (early days), prefer queue_profile_view to gently warm targets before messaging.
+- For new connection requests, only queue if the user provides the target's full LinkedIn profile URL.`;
+
+function firstName(name: string) {
+  return name.trim().split(/\s+/)[0] || name || "there";
+}
+
+function wantsBroadMessage(lower: string) {
+  return (
+    /\b(send|message|dm|contact|outreach)\b/i.test(lower) &&
+    /\b(my\s+)?(connections|network|contacts|people)\b/i.test(lower)
+  );
+}
+
+function extractRequestedMessage(userMessage: string) {
+  const quoted = userMessage.match(/["']([^"']{1,280})["']/)?.[1]?.trim();
+  if (quoted) return quoted;
+  if (/\bhi\b/i.test(userMessage)) return "Hi {first}, hope you're doing well.";
+  if (/\bhello\b/i.test(userMessage)) return "Hello {first}, hope you're doing well.";
+  return "Hi {first}, hope you're doing well.";
+}
+
+async function queueActionForApproval(action: QueuedAction) {
+  await enqueueAction({
+    data: {
+      type: action.type,
+      targetName: action.target_name,
+      targetUrl:
+        action.type === "connection_request"
+          ? action.target_url
+          : (action as any).target_url || undefined,
+      threadUrl:
+        action.type === "message" && action.target_id.startsWith("thread:")
+          ? `https://www.linkedin.com/messaging/thread/${action.target_id.slice("thread:".length)}`
+          : undefined,
+      profileUrn: undefined,
+      body: action.body,
+      reasoning: action.reasoning,
+    },
+  });
+}
+
+async function deterministicActionAgent(userMessage: string, pool: Connection[]) {
+  const lower = userMessage.toLowerCase();
+  if (!wantsBroadMessage(lower)) return null;
+
+  if (!pool.length) {
+    return {
+      assistant:
+        "I do not have imported connections yet. Go to Connections, sync/import at least one connection, then ask me to message them.",
+      actions: [] as QueuedAction[],
+    };
+  }
+
+  const topN = lower.match(/top\s+(\d+)/)?.[1];
+  const limit = topN ? Math.max(1, Math.min(Number(topN), 10)) : Math.min(pool.length, 5);
+  const template = extractRequestedMessage(userMessage);
+  const recipients = pool.slice(0, limit);
+  const created_at = new Date().toISOString();
+
+  const actions: QueuedAction[] = recipients.map((c) => {
+    const body = template.replaceAll("{first}", firstName(c.name));
+    return {
+      id: crypto.randomUUID(),
+      type: "message",
+      target_id: c.id,
+      target_name: c.name,
+      target_url: (c as any).profileUrl,
+      channel: "LinkedIn DM",
+      body,
+      reasoning: `User asked to message imported connections; ${c.name} is in the current connection list.`,
+      status: "pending",
+      created_at,
+    };
+  });
+
+  for (const action of actions) await queueActionForApproval(action);
+
+  const names = recipients.map((c) => c.name).join(", ");
+  return {
+    assistant: `Queued ${actions.length} LinkedIn message${actions.length === 1 ? "" : "s"} for approval: ${names}.\n\nOpen Requests to approve or reject before anything is marked sent.`,
+    actions,
+  };
+}
 
 function rankConnections(pool: Connection[], query: string, limit: number): Connection[] {
   const q = query.toLowerCase();
   const terms = q.split(/\s+/).filter(Boolean);
-  const scored = pool.map((c) => {
-    const hay = `${c.name} ${c.headline} ${c.company} ${c.tags.join(" ")}`.toLowerCase();
-    let score = 0;
-    for (const t of terms) {
-      if (hay.includes(t)) score += 2;
-      for (const tag of c.tags) if (tag.includes(t)) score += 3;
-    }
-    if (/vp|head|chief|founder|director|sr\.?|senior|lead/i.test(c.headline)) score += 1;
-    return { c, score };
-  })
+  const scored = pool
+    .map((c) => {
+      const hay = `${c.name} ${c.headline} ${c.company} ${c.tags.join(" ")}`.toLowerCase();
+      let score = 0;
+      for (const t of terms) {
+        if (hay.includes(t)) score += 2;
+        for (const tag of c.tags) if (tag.includes(t)) score += 3;
+      }
+      if (/vp|head|chief|founder|director|sr\.?|senior|lead/i.test(c.headline)) score += 1;
+      return { c, score };
+    })
     .filter((s) => s.score > 0)
     .sort((a, b) => b.score - a.score)
     .slice(0, limit);
@@ -63,7 +150,8 @@ const TOOLS = [
     type: "function",
     function: {
       name: "search_connections",
-      description: "Search the user's LinkedIn connections by topic, role, or keywords. Returns ranked matches.",
+      description:
+        "Search the user's LinkedIn connections by topic, role, or keywords. Returns ranked matches.",
       parameters: {
         type: "object",
         properties: {
@@ -78,13 +166,17 @@ const TOOLS = [
     type: "function",
     function: {
       name: "queue_linkedin_message",
-      description: "Queue a personalized LinkedIn DM to a connection for user approval. Does NOT send.",
+      description:
+        "Queue a personalized LinkedIn DM to a connection for user approval. Does NOT send.",
       parameters: {
         type: "object",
         properties: {
           target_id: { type: "string" },
           body: { type: "string", description: "DM body, <300 chars, personalized" },
-          reasoning: { type: "string", description: "One sentence: why this person, why this message" },
+          reasoning: {
+            type: "string",
+            description: "One sentence: why this person, why this message",
+          },
         },
         required: ["target_id", "body", "reasoning"],
       },
@@ -111,15 +203,23 @@ const TOOLS = [
     type: "function",
     function: {
       name: "queue_connection_request",
-      description: "Queue a new LinkedIn connection request with personalized note for user approval.",
+      description:
+        "Queue a new LinkedIn connection request with personalized note for user approval.",
       parameters: {
         type: "object",
         properties: {
-          target_name: { type: "string", description: "Name of person to connect with (not yet in network)" },
+          target_name: {
+            type: "string",
+            description: "Name of person to connect with (not yet in network)",
+          },
+          target_url: {
+            type: "string",
+            description: "Full LinkedIn profile URL, e.g. https://www.linkedin.com/in/name/",
+          },
           body: { type: "string", description: "Connection note, <280 chars" },
           reasoning: { type: "string" },
         },
-        required: ["target_name", "body", "reasoning"],
+        required: ["target_name", "target_url", "body", "reasoning"],
       },
     },
   },
@@ -127,7 +227,8 @@ const TOOLS = [
     type: "function",
     function: {
       name: "queue_profile_view",
-      description: "Queue a soft 'profile view' of a 1st-degree connection. Useful during account warmup before sending messages.",
+      description:
+        "Queue a soft 'profile view' of a 1st-degree connection. Useful during account warmup before sending messages.",
       parameters: {
         type: "object",
         properties: {
@@ -142,7 +243,148 @@ const TOOLS = [
 
 type ToolCall = { id: string; type: "function"; function: { name: string; arguments: string } };
 
-function executeTool(pool: Connection[], name: string, args: Record<string, unknown>): {
+type OpsContext = {
+  import?: {
+    status?: "idle" | "running" | "done" | "failed";
+    requestedCount?: number;
+    importedCount?: number;
+    totalAvailable?: number;
+    message?: string;
+  };
+};
+
+type QueueContext = Array<{
+  id: string;
+  type: string;
+  target_name: string;
+  status: string;
+  created_at?: string;
+  updated_at?: string;
+  next_run_at?: string;
+  sent_at?: string;
+  last_error?: string;
+  attempts?: number;
+}>;
+
+function wantsAction(lower: string) {
+  return /\b(send|message|dm|contact|outreach|connect|invite|view)\b/i.test(lower);
+}
+
+function wantsQueueStatus(lower: string) {
+  return (
+    /\b(queue|queued|pending|approved|status|happening|happen|running|progress|line|next|sent|go|went|worker|failed|error)\b/i.test(
+      lower,
+    ) || /\bdid\s+it\b/i.test(lower)
+  );
+}
+
+function queueSummary(queue: QueueContext) {
+  const pending = queue.filter((a) => a.status === "pending").length;
+  const approved = queue.filter(
+    (a) =>
+      a.status === "approved" ||
+      a.status === "retrying" ||
+      a.status === "running" ||
+      a.status === "sending",
+  ).length;
+  const sent = queue.filter((a) => a.status === "sent").length;
+  const failed = queue.filter((a) => a.status === "failed").length;
+  const next =
+    queue.find((a) => a.status === "running" || a.status === "sending") ||
+    queue.find(
+      (a) =>
+        (a.status === "approved" || a.status === "retrying") &&
+        (!a.next_run_at || new Date(a.next_run_at).getTime() <= Date.now()),
+    ) ||
+    queue.find((a) => a.status === "approved" || a.status === "retrying") ||
+    queue.find((a) => a.status === "pending");
+  return { pending, approved, sent, failed, next };
+}
+
+function describeQueueItem(a: QueueContext[number]) {
+  const parts = [`${a.type} for ${a.target_name}`, `status: ${a.status}`];
+  if (a.next_run_at && (a.status === "approved" || a.status === "retrying")) {
+    const nextRun = new Date(a.next_run_at);
+    parts.push(
+      nextRun.getTime() <= Date.now()
+        ? "worker due now"
+        : `next run: ${nextRun.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" })}`,
+    );
+  }
+  if (a.sent_at)
+    parts.push(
+      `sent: ${new Date(a.sent_at).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" })}`,
+    );
+  if (a.last_error) parts.push(`last error: ${a.last_error}`);
+  return parts.join(" | ");
+}
+
+function operationalAnswer(userMessage: string, ops: OpsContext, queue: QueueContext) {
+  const lower = userMessage.toLowerCase();
+  const importState = ops.import;
+  const q = queueSummary(queue);
+  const queuedMatch = wantsAction(lower)
+    ? queue.find(
+        (a) =>
+          a.target_name &&
+          lower.includes(a.target_name.toLowerCase()) &&
+          ["pending", "approved", "sending"].includes(a.status),
+      )
+    : undefined;
+
+  if (queuedMatch) {
+    return {
+      assistant:
+        `${queuedMatch.target_name} already has a ${queuedMatch.type} task in the queue with status "${queuedMatch.status}". ` +
+        "I will not create a duplicate. Check Requests for its position and approval state.",
+      actions: [] as QueuedAction[],
+    };
+  }
+
+  if (importState?.status === "running" && wantsAction(lower)) {
+    return {
+      assistant:
+        `Connection import is running right now (${importState.requestedCount ?? "selected"} requested). ` +
+        "I will not queue new LinkedIn actions until the import finishes, so the account does one job at a time. " +
+        `Current queue: ${q.pending} pending approval, ${q.approved} approved/running.`,
+      actions: [] as QueuedAction[],
+    };
+  }
+
+  if (wantsQueueStatus(lower)) {
+    const importLine =
+      importState?.status === "running"
+        ? `Import: running (${importState.requestedCount ?? "selected"} requested).`
+        : importState?.status === "done"
+          ? `Import: done (${importState.importedCount ?? 0}${importState.totalAvailable ? ` of about ${importState.totalAvailable}` : ""} imported).`
+          : importState?.status === "failed"
+            ? `Import: failed - ${importState.message || "last import did not complete"}.`
+            : "Import: idle.";
+    const nextLine = q.next
+      ? `Next queue item: ${describeQueueItem(q.next)}.`
+      : "Next queue item: none.";
+    const recent = queue
+      .filter((a) => ["running", "approved", "retrying", "failed", "sent"].includes(a.status))
+      .slice(-3)
+      .reverse()
+      .map((a) => `- ${describeQueueItem(a)}`)
+      .join("\n");
+    return {
+      assistant:
+        `${importLine}\n\nQueue: ${q.pending} pending approval, ${q.approved} approved/running/retrying, ${q.sent} sent, ${q.failed} failed.\n${nextLine}\n\nOnly actions with status "sent" have actually gone through LinkedIn.` +
+        (recent ? `\n\nRecent tracked actions:\n${recent}` : ""),
+      actions: [] as QueuedAction[],
+    };
+  }
+
+  return null;
+}
+
+function executeTool(
+  pool: Connection[],
+  name: string,
+  args: Record<string, unknown>,
+): {
   result: unknown;
   action?: QueuedAction;
 } {
@@ -156,9 +398,16 @@ function executeTool(pool: Connection[], name: string, args: Record<string, unkn
     const target = pool.find((c) => c.id === args.target_id);
     if (!target) return { result: { error: "connection not found" } };
     const action: QueuedAction = {
-      id, type: "message", target_id: target.id, target_name: target.name,
-      channel: "LinkedIn DM", body: String(args.body), reasoning: String(args.reasoning),
-      status: "pending", created_at,
+      id,
+      type: "message",
+      target_id: target.id,
+      target_name: target.name,
+      target_url: (target as any).profileUrl,
+      channel: "LinkedIn DM",
+      body: String(args.body),
+      reasoning: String(args.reasoning),
+      status: "pending",
+      created_at,
     };
     return { result: { queued: true, action_id: id }, action };
   }
@@ -166,17 +415,35 @@ function executeTool(pool: Connection[], name: string, args: Record<string, unkn
     const target = pool.find((c) => c.id === args.target_id);
     if (!target) return { result: { error: "connection not found" } };
     const action: QueuedAction = {
-      id, type: "email", target_id: target.id, target_name: target.name,
-      channel: "Email", subject: String(args.subject), body: String(args.body),
-      reasoning: String(args.reasoning), status: "pending", created_at,
+      id,
+      type: "email",
+      target_id: target.id,
+      target_name: target.name,
+      channel: "Email",
+      subject: String(args.subject),
+      body: String(args.body),
+      reasoning: String(args.reasoning),
+      status: "pending",
+      created_at,
     };
     return { result: { queued: true, action_id: id }, action };
   }
   if (name === "queue_connection_request") {
+    const targetUrl = String(args.target_url ?? "").trim();
+    if (!/^https:\/\/([a-z]{2,3}\.)?linkedin\.com\/(in|pub)\//i.test(targetUrl)) {
+      return { result: { error: "full LinkedIn profile URL required for connection request" } };
+    }
     const action: QueuedAction = {
-      id, type: "connection_request", target_id: "new", target_name: String(args.target_name),
-      channel: "LinkedIn Invite", body: String(args.body), reasoning: String(args.reasoning),
-      status: "pending", created_at,
+      id,
+      type: "connection_request",
+      target_id: targetUrl,
+      target_name: String(args.target_name),
+      target_url: targetUrl,
+      channel: "LinkedIn Invite",
+      body: String(args.body),
+      reasoning: String(args.reasoning),
+      status: "pending",
+      created_at,
     };
     return { result: { queued: true, action_id: id }, action };
   }
@@ -184,9 +451,16 @@ function executeTool(pool: Connection[], name: string, args: Record<string, unkn
     const target = pool.find((c) => c.id === args.target_id);
     if (!target) return { result: { error: "connection not found" } };
     const action: QueuedAction = {
-      id, type: "profile_view", target_id: target.id, target_name: target.name,
-      channel: "LinkedIn Profile View", body: "(silent profile view)",
-      reasoning: String(args.reasoning), status: "pending", created_at,
+      id,
+      type: "profile_view",
+      target_id: target.id,
+      target_name: target.name,
+      target_url: (target as any).profileUrl,
+      channel: "LinkedIn Profile View",
+      body: "(silent profile view)",
+      reasoning: String(args.reasoning),
+      status: "pending",
+      created_at,
     };
     return { result: { queued: true, action_id: id }, action };
   }
@@ -194,62 +468,86 @@ function executeTool(pool: Connection[], name: string, args: Record<string, unkn
 }
 
 // ── Offline fallback: deterministic agent (no API key needed for demo) ────────
-function offlineAgent(userMessage: string, pool: Connection[]): { assistant: string; actions: QueuedAction[] } {
+function offlineAgent(
+  userMessage: string,
+  pool: Connection[],
+): { assistant: string; actions: QueuedAction[] } {
   const lower = userMessage.toLowerCase();
   const topN = lower.match(/top\s+(\d+)/)?.[1];
-  const limit = topN ? parseInt(topN) : 3;
+  const limit = topN ? parseInt(topN) : 10;
 
-  // Extract topic keywords
-  const topicKeywords = ["supply chain", "logistics", "procurement", "operations", "engineering", "product", "fintech", "marketing", "ml", "ai", "founder"];
-  const matchedTopic = topicKeywords.find((k) => lower.includes(k)) ?? "supply chain";
-
-  const wantsMessage = lower.includes("message") || lower.includes("dm") || lower.includes("outreach") || lower.includes("contact");
+  const wantsMessage =
+    lower.includes("message") ||
+    lower.includes("dm") ||
+    lower.includes("outreach") ||
+    lower.includes("contact") ||
+    lower.includes("send");
   const wantsEmail = lower.includes("email") || lower.includes("mail");
-  const wantsList = lower.includes("list") || lower.includes("show") || lower.includes("find") || lower.includes("give") || lower.includes("who") || lower.includes("top");
-  const wantsInbox = lower.includes("inbox") || lower.includes("summarize") || lower.includes("summary");
-  const wantsRequests = lower.includes("request") || lower.includes("pending");
+  const wantsList =
+    lower.includes("list") ||
+    lower.includes("show") ||
+    lower.includes("find") ||
+    lower.includes("give") ||
+    lower.includes("who") ||
+    lower.includes("top") ||
+    lower.includes("all");
+  const wantsInbox =
+    lower.includes("inbox") || lower.includes("summarize") || lower.includes("summary");
 
   if (wantsInbox) {
-    return { assistant: "Your inbox has 4 messages — 2 unread. Priya Shah from Flipkart reached out about supply chain tech, and Vikram Reddy from Razorpay mentioned a backend opening. Want me to draft replies for any of them?", actions: [] };
-  }
-  if (wantsRequests) {
-    return { assistant: "You have 3 pending connection requests — Rohan Malhotra (McKinsey, supply chain), Tanvi Shah (Zomato), and Kavya Reddy (BigBasket). Want me to accept all or review individually?", actions: [] };
-  }
-
-  const matches = rankConnections(pool, matchedTopic, limit);
-  if (!matches.length) {
-    return { assistant: `I searched your connections for "${matchedTopic}" but found no strong matches. Try a broader term like "operations" or "logistics".`, actions: [] };
+    return {
+      assistant:
+        "Inbox automation is paused in this build so the LinkedIn session stays quiet. I can still search imported connections and queue approved outreach/actions.",
+      actions: [],
+    };
   }
 
-  if (wantsList && !wantsMessage && !wantsEmail) {
-    const list = matches.map((c, i) => `${i + 1}. **${c.name}** — ${c.headline} @ ${c.company}`).join("\n");
-    return { assistant: `Here are the top ${matches.length} connections for "${matchedTopic}":\n\n${list}\n\nWant me to draft outreach for any of them?`, actions: [] };
-  }
+  // "list my connections" / "show all"
+  const wantsAllConnections =
+    /\b(list|show|all|who)\b.*\b(connection|contact|people|network)\b/i.test(lower) ||
+    /\b(connection|contact)\b.*\b(list|show|all)\b/i.test(lower);
 
-  const actions: QueuedAction[] = matches.map((c) => {
-    const id = crypto.randomUUID();
-    if (wantsEmail && c.email) {
+  if (wantsAllConnections || (wantsList && !wantsMessage && !wantsEmail)) {
+    if (!pool.length) {
       return {
-        id, type: "email" as const, target_id: c.id, target_name: c.name,
-        channel: "Email", subject: `Quick hello from a fellow ${matchedTopic} enthusiast`,
-        body: `Hi ${c.name.split(" ")[0]},\n\nI came across your work at ${c.company} and was impressed by your focus on ${matchedTopic}. I'd love to connect and share notes on the space.\n\nWould you be open to a quick 15-min chat?\n\nBest,\n[Your name]`,
-        reasoning: `${c.name} is a strong ${matchedTopic} contact at ${c.company} and has an email on file.`,
-        status: "pending" as const, created_at: new Date().toISOString(),
+        assistant:
+          "You don't have any imported connections yet. Go to **Connections** and sync your LinkedIn account first.",
+        actions: [],
       };
     }
+    const showing = pool.slice(0, Math.min(limit, pool.length));
+    const list = showing
+      .map(
+        (c, i) =>
+          `${i + 1}. **${c.name}** — ${c.headline || "—"} ${c.company ? `@ ${c.company}` : ""}`,
+      )
+      .join("\n");
+    const moreNote =
+      pool.length > showing.length ? `\n\n…and ${pool.length - showing.length} more.` : "";
     return {
-      id, type: "message" as const, target_id: c.id, target_name: c.name,
-      channel: "LinkedIn DM",
-      body: `Hi ${c.name.split(" ")[0]}, loved your work in ${matchedTopic} at ${c.company}. Would love to connect and swap notes — would you be open to a quick chat?`,
-      reasoning: `${c.name} is ranked top for "${matchedTopic}" — ${c.headline} at ${c.company}.`,
-      status: "pending" as const, created_at: new Date().toISOString(),
+      assistant: `Here are your ${showing.length} connection${showing.length === 1 ? "" : "s"}:\n\n${list}${moreNote}\n\nWant me to draft outreach for any of them?`,
+      actions: [],
     };
-  });
+  }
 
-  const names = matches.map((c) => c.name).join(", ");
+  // Fallback
+  if (!pool.length) {
+    return {
+      assistant:
+        "I don't have any imported connections yet. Go to **Connections** and sync your LinkedIn account, then come back.",
+      actions: [],
+    };
+  }
+  const showing = pool.slice(0, 5);
+  const list = showing
+    .map(
+      (c, i) =>
+        `${i + 1}. **${c.name}** — ${c.headline || "—"} ${c.company ? `@ ${c.company}` : ""}`,
+    )
+    .join("\n");
   return {
-    assistant: `Found your top ${matches.length} ${matchedTopic} connections: **${names}**.\n\nI've queued ${wantsEmail ? "emails" : "LinkedIn DMs"} for each — check the **Requests** tab to review and approve before anything is sent.`,
-    actions,
+    assistant: `I have ${pool.length} connection${pool.length === 1 ? "" : "s"} imported:\n\n${list}\n\nTry: "list all my connections", "send [name] hi", or "message my connections"`,
+    actions: [],
   };
 }
 
@@ -260,7 +558,41 @@ const ConnectionSchema = z.object({
   company: z.string(),
   location: z.string().optional().default(""),
   tags: z.array(z.string()),
+  profileUrl: z.string().optional(),
+  email: z.string().optional(),
 });
+
+const OpsSchema = z
+  .object({
+    import: z
+      .object({
+        status: z.enum(["idle", "running", "done", "failed"]).optional(),
+        requestedCount: z.number().optional(),
+        importedCount: z.number().optional(),
+        totalAvailable: z.number().optional(),
+        message: z.string().optional(),
+      })
+      .optional(),
+  })
+  .optional();
+
+const QueueContextSchema = z
+  .array(
+    z.object({
+      id: z.string(),
+      type: z.string(),
+      target_name: z.string(),
+      status: z.string(),
+      created_at: z.string().optional(),
+      updated_at: z.string().optional(),
+      next_run_at: z.string().optional(),
+      sent_at: z.string().optional(),
+      last_error: z.string().optional(),
+      attempts: z.number().optional(),
+    }),
+  )
+  .max(500)
+  .optional();
 
 export const runAgent = createServerFn({ method: "POST" })
   .inputValidator(
@@ -268,22 +600,48 @@ export const runAgent = createServerFn({ method: "POST" })
       messages: z.array(MessageSchema).min(1).max(50),
       connections: z.array(ConnectionSchema).max(5000).optional(),
       warmupDay: z.number().min(0).max(14).optional(),
+      ops: OpsSchema,
+      queue: QueueContextSchema,
     }),
   )
   .handler(async ({ data }) => {
-    const pool: Connection[] = (data.connections?.length ? data.connections : MOCK_CONNECTIONS) as Connection[];
-    const warmupNote = typeof data.warmupDay === "number"
-      ? `\n\nUSER CONTEXT: Account warmup day ${data.warmupDay} of 14. ${data.warmupDay < 5 ? "Strongly prefer profile_view actions; avoid invites." : "Limited messages allowed."}`
-      : "";
+    const pool: Connection[] = (
+      data.connections?.length ? data.connections : MOCK_CONNECTIONS
+    ) as Connection[];
+    const lastUserMsg = [...data.messages].reverse().find((m) => m.role === "user");
+    const serverQueue = await readQueueActions().catch(() => []);
+    const queueContext: QueueContext = serverQueue.length
+      ? serverQueue.map((a) => ({
+          id: a.id,
+          type: a.type,
+          target_name: a.targetName,
+          status: a.status,
+          created_at: a.createdAt,
+          updated_at: a.updatedAt,
+          next_run_at: a.nextRunAt,
+          sent_at: a.sentAt,
+          last_error: a.lastError,
+          attempts: a.attempts,
+        }))
+      : data.queue || [];
+    const operational = operationalAnswer(lastUserMsg?.content ?? "", data.ops || {}, queueContext);
+    if (operational) return operational;
+    const deterministic = await deterministicActionAgent(lastUserMsg?.content ?? "", pool);
+    if (deterministic) return deterministic;
 
-    // Try Anthropic API first, fall back to offline agent
+    const warmupNote =
+      typeof data.warmupDay === "number"
+        ? `\n\nUSER CONTEXT: Account warmup day ${data.warmupDay} of 14. ${data.warmupDay < 5 ? "Strongly prefer profile_view actions; avoid invites." : "Limited messages allowed."}`
+        : "";
+
+    // Priority: Fireworks > Anthropic > Lovable > offline
+    const fireworksKey = process.env.FIREWORKS_API_KEY;
     const anthropicKey = process.env.ANTHROPIC_API_KEY;
     const lovableKey = process.env.LOVABLE_API_KEY;
 
-    if (!anthropicKey && !lovableKey) {
-      // Offline fallback — works with zero API keys, great for demo
-      const lastUserMsg = [...data.messages].reverse().find((m) => m.role === "user");
+    if (!fireworksKey && !anthropicKey && !lovableKey) {
       const result = offlineAgent(lastUserMsg?.content ?? "", pool);
+      for (const action of result.actions) await queueActionForApproval(action);
       return result;
     }
 
@@ -293,17 +651,28 @@ export const runAgent = createServerFn({ method: "POST" })
     ];
     const queuedActions: QueuedAction[] = [];
 
-    // Prefer Anthropic, fall back to Lovable gateway
-    const useAnthropic = !!anthropicKey;
-    const apiUrl = useAnthropic
-      ? "https://api.anthropic.com/v1/messages"
-      : "https://ai.gateway.lovable.dev/v1/chat/completions";
+    let provider: "fireworks" | "anthropic" | "lovable";
+    let apiUrl: string;
+    let model: string;
+
+    if (fireworksKey) {
+      provider = "fireworks";
+      apiUrl = "https://api.fireworks.ai/inference/v1/chat/completions";
+      model = "accounts/fireworks/models/deepseek-v4-pro";
+    } else if (anthropicKey) {
+      provider = "anthropic";
+      apiUrl = "https://api.anthropic.com/v1/messages";
+      model = "claude-sonnet-4-20250514";
+    } else {
+      provider = "lovable";
+      apiUrl = "https://ai.gateway.lovable.dev/v1/chat/completions";
+      model = "google/gemini-2.5-flash";
+    }
 
     for (let i = 0; i < 5; i++) {
       let res: Response;
 
-      if (useAnthropic) {
-        // Anthropic messages API format
+      if (provider === "anthropic") {
         const systemMsg = messages.find((m) => m.role === "system");
         const chatMessages = messages.filter((m) => m.role !== "system");
         res = await fetch(apiUrl, {
@@ -314,10 +683,13 @@ export const runAgent = createServerFn({ method: "POST" })
             "Content-Type": "application/json",
           },
           body: JSON.stringify({
-            model: "claude-sonnet-4-20250514",
+            model,
             max_tokens: 1024,
             system: systemMsg?.content ?? SYSTEM_PROMPT,
-            messages: chatMessages.map((m) => ({ role: m.role === "tool" ? "user" : m.role, content: m.content })),
+            messages: chatMessages.map((m) => ({
+              role: m.role === "tool" ? "user" : m.role,
+              content: m.content,
+            })),
             tools: TOOLS.map((t) => ({
               name: t.function.name,
               description: t.function.description,
@@ -326,25 +698,35 @@ export const runAgent = createServerFn({ method: "POST" })
           }),
         });
       } else {
+        const apiKey = provider === "fireworks" ? fireworksKey : lovableKey;
         res = await fetch(apiUrl, {
           method: "POST",
           headers: {
-            Authorization: `Bearer ${lovableKey}`,
+            Authorization: `Bearer ${apiKey}`,
             "Content-Type": "application/json",
           },
           body: JSON.stringify({
-            model: "google/gemini-2.5-flash",
+            model,
             messages,
             tools: TOOLS,
+            tool_choice: "auto",
+            max_tokens: 1024,
+            temperature: 0.3,
           }),
         });
       }
 
       if (!res.ok) {
-        const text = await res.text();
-        // On API error, fall back to offline
-        const lastUserMsg = [...data.messages].reverse().find((m) => m.role === "user");
-        return offlineAgent(lastUserMsg?.content ?? "", pool);
+        const text = await res.text().catch(() => "");
+        console.error(`[agent] ${provider} API error (${res.status}):`, text.slice(0, 300));
+        return {
+          assistant:
+            `⚠ ${provider.charAt(0).toUpperCase() + provider.slice(1)} API returned ${res.status}. ` +
+            (res.status === 401 || res.status === 403
+              ? `Your API key looks invalid or expired. Update FIREWORKS_API_KEY in .env.local and restart the dev server.`
+              : `Error: ${text.slice(0, 200)}`),
+          actions: [] as QueuedAction[],
+        };
       }
 
       const json = await res.json();
@@ -352,12 +734,15 @@ export const runAgent = createServerFn({ method: "POST" })
       let textContent = "";
       let toolCalls: ToolCall[] = [];
 
-      if (useAnthropic) {
-        // Anthropic response format
+      if (provider === "anthropic") {
         for (const block of json.content ?? []) {
           if (block.type === "text") textContent = block.text;
           if (block.type === "tool_use") {
-            toolCalls.push({ id: block.id, type: "function", function: { name: block.name, arguments: JSON.stringify(block.input) } });
+            toolCalls.push({
+              id: block.id,
+              type: "function",
+              function: { name: block.name, arguments: JSON.stringify(block.input) },
+            });
           }
         }
       } else {
@@ -379,9 +764,16 @@ export const runAgent = createServerFn({ method: "POST" })
 
       for (const tc of toolCalls) {
         let parsedArgs: Record<string, unknown> = {};
-        try { parsedArgs = JSON.parse(tc.function.arguments || "{}"); } catch { /* noop */ }
+        try {
+          parsedArgs = JSON.parse(tc.function.arguments || "{}");
+        } catch {
+          /* noop */
+        }
         const { result, action } = executeTool(pool, tc.function.name, parsedArgs);
-        if (action) queuedActions.push(action);
+        if (action) {
+          await queueActionForApproval(action);
+          queuedActions.push(action);
+        }
         messages.push({
           role: "tool",
           tool_call_id: tc.id,

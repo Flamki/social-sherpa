@@ -4,9 +4,7 @@ import type { Connection } from "./mockConnections";
 // We tolerate extra preamble lines that LinkedIn sometimes adds.
 export function parseLinkedInCsv(text: string): Connection[] {
   const lines = text.split(/\r?\n/).filter((l) => l.trim().length > 0);
-  const headerIdx = lines.findIndex((l) =>
-    /first name/i.test(l) && /last name/i.test(l),
-  );
+  const headerIdx = lines.findIndex((l) => /first name/i.test(l) && /last name/i.test(l));
   if (headerIdx === -1) return [];
   const rows = lines.slice(headerIdx).map(parseCsvRow);
   const header = rows[0].map((h) => h.trim().toLowerCase());
@@ -25,11 +23,7 @@ export function parseLinkedInCsv(text: string): Connection[] {
     if (!name) continue;
     const tagSrc = `${headline} ${company}`.toLowerCase();
     const tags = Array.from(
-      new Set(
-        tagSrc
-          .split(/[\s,/&|-]+/)
-          .filter((t) => t.length > 2 && !STOP.has(t)),
-      ),
+      new Set(tagSrc.split(/[\s,/&|-]+/).filter((t) => t.length > 2 && !STOP.has(t))),
     ).slice(0, 8);
     out.push({
       id: `csv-${i}`,
@@ -44,9 +38,32 @@ export function parseLinkedInCsv(text: string): Connection[] {
 }
 
 const STOP = new Set([
-  "the","and","for","with","from","into","that","this","over","under",
-  "inc","llc","ltd","pvt","pte","corp","gmbh","plc","co",
-  "at","of","in","on","to","by","or",
+  "the",
+  "and",
+  "for",
+  "with",
+  "from",
+  "into",
+  "that",
+  "this",
+  "over",
+  "under",
+  "inc",
+  "llc",
+  "ltd",
+  "pvt",
+  "pte",
+  "corp",
+  "gmbh",
+  "plc",
+  "co",
+  "at",
+  "of",
+  "in",
+  "on",
+  "to",
+  "by",
+  "or",
 ]);
 
 function parseCsvRow(line: string): string[] {
@@ -56,12 +73,16 @@ function parseCsvRow(line: string): string[] {
   for (let i = 0; i < line.length; i++) {
     const c = line[i];
     if (inQ) {
-      if (c === '"' && line[i + 1] === '"') { cur += '"'; i++; }
-      else if (c === '"') inQ = false;
+      if (c === '"' && line[i + 1] === '"') {
+        cur += '"';
+        i++;
+      } else if (c === '"') inQ = false;
       else cur += c;
     } else {
-      if (c === ",") { out.push(cur); cur = ""; }
-      else if (c === '"') inQ = true;
+      if (c === ",") {
+        out.push(cur);
+        cur = "";
+      } else if (c === '"') inQ = true;
       else cur += c;
     }
   }

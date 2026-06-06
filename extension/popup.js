@@ -1,7 +1,13 @@
 const $ = (id) => document.getElementById(id);
-const status = (msg, cls) => { const el = $("status"); el.className = "status " + cls; el.textContent = msg; };
+const status = (msg, cls) => {
+  const el = $("status");
+  el.className = "status " + cls;
+  el.textContent = msg;
+};
 
-chrome.storage.local.get(["endpoint"], ({ endpoint }) => { if (endpoint) $("endpoint").value = endpoint; });
+chrome.storage.local.get(["endpoint"], ({ endpoint }) => {
+  if (endpoint) $("endpoint").value = endpoint;
+});
 
 $("capture").addEventListener("click", async () => {
   const endpoint = $("endpoint").value.trim().replace(/\/$/, "");
@@ -19,7 +25,11 @@ $("capture").addEventListener("click", async () => {
     const res = await fetch(endpoint + "/api/public/link-session", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ cookies, capturedAt: new Date().toISOString(), userAgent: navigator.userAgent }),
+      body: JSON.stringify({
+        cookies,
+        capturedAt: new Date().toISOString(),
+        userAgent: navigator.userAgent,
+      }),
     });
     if (!res.ok) throw new Error("HTTP " + res.status);
     status("Linked. You can close this and return to the app.", "ok");

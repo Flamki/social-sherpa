@@ -81,7 +81,9 @@ function UsageBar({ label, used, cap }: { label: string; used: number; cap: numb
     <div>
       <div className="mb-1 flex justify-between text-xs">
         <span>{label}</span>
-        <span className="text-muted-foreground">{used} / {cap}</span>
+        <span className="text-muted-foreground">
+          {used} / {cap}
+        </span>
       </div>
       <div className="h-2 overflow-hidden rounded-full bg-muted">
         <div className="h-full bg-primary transition-all" style={{ width: `${pct}%` }} />

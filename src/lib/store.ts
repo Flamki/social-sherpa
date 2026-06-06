@@ -2,13 +2,7 @@ import { useSyncExternalStore } from "react";
 
 import { MOCK_CONNECTIONS, type Connection } from "./mockConnections";
 
-export type ActionStatus =
-  | "pending"
-  | "approved"
-  | "sending"
-  | "sent"
-  | "rejected"
-  | "failed";
+export type ActionStatus = "pending" | "approved" | "sending" | "sent" | "rejected" | "failed";
 
 export type Action = {
   id: string;
@@ -39,6 +33,8 @@ export type SessionState = {
   connected: boolean;
   capturedAt?: string;
   userAgent?: string;
+  displayName?: string;
+  accountId?: string;
 };
 
 export type ConnectionsState = {
@@ -47,15 +43,32 @@ export type ConnectionsState = {
   items: Connection[];
 };
 
+export type ImportOpState = {
+  status: "idle" | "running" | "done" | "failed";
+  jobId?: string;
+  startedAt?: string;
+  finishedAt?: string;
+  requestedCount?: number;
+  importedCount?: number;
+  totalAvailable?: number;
+  message?: string;
+};
+
+export type AgentMessage = { role: "user" | "assistant"; content: string };
+
 export type AppState = {
   onboarded: boolean;
-  session: SessionState;
+  session: SessionState & { cookies?: { li_at: string; JSESSIONID: string } };
   caps: Caps;
   warmup: WarmupState;
   connections: ConnectionsState;
   actions: Action[];
+  ops: {
+    import: ImportOpState;
+  };
   // counters: yyyy-mm-dd -> { invites, messages, views }
   daily: Record<string, { invites: number; messages: number; views: number }>;
+  messages: AgentMessage[];
 };
 
 const KEY = "nm.state.v1";
@@ -67,7 +80,15 @@ const DEFAULT: AppState = {
   warmup: { startedAt: null },
   connections: { source: "mock", items: MOCK_CONNECTIONS },
   actions: [],
+  ops: { import: { status: "idle" } },
   daily: {},
+  messages: [
+    {
+      role: "assistant",
+      content:
+        "Hi! I'm your LinkedIn Network Manager. I can search your connections, draft outreach, manage connection requests, and more. What would you like to do?",
+    },
+  ],
 };
 
 let state: AppState = DEFAULT;
@@ -78,11 +99,17 @@ function load() {
   try {
     const raw = window.localStorage.getItem(KEY);
     if (raw) state = { ...DEFAULT, ...JSON.parse(raw) };
-  } catch { /* noop */ }
+  } catch {
+    /* noop */
+  }
 }
 function persist() {
   if (typeof window === "undefined") return;
-  try { window.localStorage.setItem(KEY, JSON.stringify(state)); } catch { /* noop */ }
+  try {
+    window.localStorage.setItem(KEY, JSON.stringify(state));
+  } catch {
+    /* noop */
+  }
 }
 function emit() {
   persist();
@@ -97,7 +124,10 @@ export const store = {
     state = typeof patch === "function" ? patch(state) : { ...state, ...patch };
     emit();
   },
-  subscribe: (l: () => void) => { listeners.add(l); return () => listeners.delete(l); },
+  subscribe: (l: () => void) => {
+    listeners.add(l);
+    return () => listeners.delete(l);
+  },
 };
 
 const SERVER_SNAPSHOT = DEFAULT;
@@ -112,9 +142,7 @@ export function useStore<T>(selector: (s: AppState) => T): T {
 // --- Derived helpers ---
 export function warmupDay(s: AppState = state): number {
   if (!s.warmup.startedAt) return 0;
-  const days = Math.floor(
-    (Date.now() - new Date(s.warmup.startedAt).getTime()) / 86400000,
-  );
+  const days = Math.floor((Date.now() - new Date(s.warmup.startedAt).getTime()) / 86400000);
   return Math.min(14, Math.max(0, days) + 1);
 }
 
@@ -130,7 +158,9 @@ export function effectiveCaps(s: AppState = state): Caps {
   };
 }
 
-function today() { return new Date().toISOString().slice(0, 10); }
+function today() {
+  return new Date().toISOString().slice(0, 10);
+}
 
 export function todaysUsage(s: AppState = state) {
   return s.daily[today()] ?? { invites: 0, messages: 0, views: 0 };
@@ -156,7 +186,7 @@ function canSend(type: Action["type"]): boolean {
 }
 
 export function addActions(actions: Action[]) {
-  store.set((s) => ({ ...s, actions: [...actions, ...s.actions] }));
+  store.set((s) => ({ ...s, actions: [...s.actions, ...actions] }));
 }
 
 export function decide(id: string, approve: boolean) {
@@ -165,6 +195,23 @@ export function decide(id: string, approve: boolean) {
     actions: s.actions.map((a) =>
       a.id === id ? { ...a, status: approve ? "approved" : "rejected" } : a,
     ),
+  }));
+}
+
+export function setAgentMessages(messages: AgentMessage[]) {
+  store.set((s) => ({ ...s, messages }));
+}
+
+export function clearAgentMessages() {
+  store.set((s) => ({
+    ...s,
+    messages: [
+      {
+        role: "assistant",
+        content:
+          "Hi! I'm your LinkedIn Network Manager. I can search your connections, draft outreach, manage connection requests, and more. What would you like to do?",
+      },
+    ],
   }));
 }
 

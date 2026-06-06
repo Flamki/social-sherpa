@@ -13,7 +13,6 @@ import { Route as RequestsRouteImport } from './routes/requests'
 import { Route as OverviewRouteImport } from './routes/overview'
 import { Route as OnboardingRouteImport } from './routes/onboarding'
 import { Route as InboxRouteImport } from './routes/inbox'
-import { Route as ExtensionRouteImport } from './routes/extension'
 import { Route as ConnectionsRouteImport } from './routes/connections'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as ApiPublicLinkSessionRouteImport } from './routes/api/public/link-session'
@@ -38,11 +37,6 @@ const InboxRoute = InboxRouteImport.update({
   path: '/inbox',
   getParentRoute: () => rootRouteImport,
 } as any)
-const ExtensionRoute = ExtensionRouteImport.update({
-  id: '/extension',
-  path: '/extension',
-  getParentRoute: () => rootRouteImport,
-} as any)
 const ConnectionsRoute = ConnectionsRouteImport.update({
   id: '/connections',
   path: '/connections',
@@ -62,7 +56,6 @@ const ApiPublicLinkSessionRoute = ApiPublicLinkSessionRouteImport.update({
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/connections': typeof ConnectionsRoute
-  '/extension': typeof ExtensionRoute
   '/inbox': typeof InboxRoute
   '/onboarding': typeof OnboardingRoute
   '/overview': typeof OverviewRoute
@@ -72,7 +65,6 @@ export interface FileRoutesByFullPath {
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/connections': typeof ConnectionsRoute
-  '/extension': typeof ExtensionRoute
   '/inbox': typeof InboxRoute
   '/onboarding': typeof OnboardingRoute
   '/overview': typeof OverviewRoute
@@ -83,7 +75,6 @@ export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
   '/connections': typeof ConnectionsRoute
-  '/extension': typeof ExtensionRoute
   '/inbox': typeof InboxRoute
   '/onboarding': typeof OnboardingRoute
   '/overview': typeof OverviewRoute
@@ -95,7 +86,6 @@ export interface FileRouteTypes {
   fullPaths:
     | '/'
     | '/connections'
-    | '/extension'
     | '/inbox'
     | '/onboarding'
     | '/overview'
@@ -105,7 +95,6 @@ export interface FileRouteTypes {
   to:
     | '/'
     | '/connections'
-    | '/extension'
     | '/inbox'
     | '/onboarding'
     | '/overview'
@@ -115,7 +104,6 @@ export interface FileRouteTypes {
     | '__root__'
     | '/'
     | '/connections'
-    | '/extension'
     | '/inbox'
     | '/onboarding'
     | '/overview'
@@ -126,7 +114,6 @@ export interface FileRouteTypes {
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   ConnectionsRoute: typeof ConnectionsRoute
-  ExtensionRoute: typeof ExtensionRoute
   InboxRoute: typeof InboxRoute
   OnboardingRoute: typeof OnboardingRoute
   OverviewRoute: typeof OverviewRoute
@@ -164,13 +151,6 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof InboxRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/extension': {
-      id: '/extension'
-      path: '/extension'
-      fullPath: '/extension'
-      preLoaderRoute: typeof ExtensionRouteImport
-      parentRoute: typeof rootRouteImport
-    }
     '/connections': {
       id: '/connections'
       path: '/connections'
@@ -198,7 +178,6 @@ declare module '@tanstack/react-router' {
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   ConnectionsRoute: ConnectionsRoute,
-  ExtensionRoute: ExtensionRoute,
   InboxRoute: InboxRoute,
   OnboardingRoute: OnboardingRoute,
   OverviewRoute: OverviewRoute,

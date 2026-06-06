@@ -1,7 +1,10 @@
 import "./lib/error-capture";
-
 import { consumeLastCapturedError } from "./lib/error-capture";
 import { renderErrorPage } from "./lib/error-page";
+import { startHeartbeatCron } from "./lib/linkedin.heartbeat";
+
+// Start background heartbeats to keep LinkedIn cookies fresh
+startHeartbeatCron();
 
 type ServerEntry = {
   fetch: (request: Request, env: unknown, ctx: unknown) => Promise<Response> | Response;

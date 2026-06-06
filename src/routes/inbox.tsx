@@ -1,147 +1,315 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { useState } from "react";
-import { MailCheck, Send, Eye, MessageCircle, ChevronDown, ChevronUp } from "lucide-react";
+import { useState, useCallback } from "react";
+import {
+  Inbox as InboxIcon,
+  Send,
+  Loader2,
+  RefreshCw,
+  MessageCircle,
+  AlertCircle,
+  Linkedin,
+  ArrowLeft,
+} from "lucide-react";
+import { useServerFn } from "@tanstack/react-start";
 
 import { AppShell } from "@/components/app/AppShell";
 import { Card } from "@/components/ui/card";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import { useStore } from "@/lib/store";
-import { MOCK_INBOX_MESSAGES } from "@/lib/mockConnections";
+import {
+  listConversations,
+  readThread,
+  type Conversation,
+  type ThreadMessage,
+} from "@/lib/linkedin.inbox";
+import { sendMessage } from "@/lib/linkedin.message";
 
 export const Route = createFileRoute("/inbox")({
   head: () => ({
     meta: [
       { title: "Inbox — Network Manager" },
-      { name: "description", content: "LinkedIn messages and sent outreach from your AI agent." },
+      { name: "description", content: "Unified LinkedIn inbox — read and reply to conversations." },
     ],
   }),
   component: InboxPage,
 });
 
-function timeAgo(ts: string) {
-  const diff = Date.now() - new Date(ts).getTime();
-  const h = Math.floor(diff / 3600000);
-  if (h < 1) return "Just now";
-  if (h < 24) return `${h}h ago`;
-  return `${Math.floor(h / 24)}d ago`;
-}
-
 function InboxPage() {
-  const sent = useStore((s) => s.actions.filter((a) => a.status === "sent"));
-  const [expanded, setExpanded] = useState<string | null>(null);
-  const [messages, setMessages] = useState(MOCK_INBOX_MESSAGES);
+  const session = useStore((s) => s.session);
+  const cookies = (session as any).cookies as { li_at: string; JSESSIONID: string } | undefined;
 
-  function markRead(id: string) {
-    setMessages((prev) => prev.map((m) => m.id === id ? { ...m, unread: false } : m));
-    setExpanded((cur) => cur === id ? null : id);
+  const fetchConvos = useServerFn(listConversations);
+  const fetchThread = useServerFn(readThread);
+  const send = useServerFn(sendMessage);
+
+  const [convos, setConvos] = useState<Conversation[]>([]);
+  const [loadingList, setLoadingList] = useState(false);
+  const [listError, setListError] = useState("");
+
+  const [active, setActive] = useState<Conversation | null>(null);
+  const [thread, setThread] = useState<ThreadMessage[]>([]);
+  const [meName, setMeName] = useState("");
+  const [loadingThread, setLoadingThread] = useState(false);
+
+  const [draft, setDraft] = useState("");
+  const [sending, setSending] = useState(false);
+  const [sendNote, setSendNote] = useState("");
+  const [search, setSearch] = useState("");
+
+  const loadList = useCallback(async () => {
+    if (!cookies) return;
+    setLoadingList(true);
+    setListError("");
+    try {
+      const res = await fetchConvos({ data: { cookies, headless: true } });
+      if (res.success) setConvos(res.conversations);
+      else setListError(res.error);
+    } catch (e) {
+      setListError((e as Error).message);
+    } finally {
+      setLoadingList(false);
+    }
+  }, [cookies, fetchConvos]);
+
+  async function openThread(c: Conversation) {
+    setActive(c);
+    setThread([]);
+    setSendNote("");
+    setLoadingThread(true);
+    try {
+      const res = await fetchThread({
+        data: { cookies: cookies!, threadUrl: c.threadUrl, headless: true },
+      });
+      if (res.success) {
+        setThread(res.messages);
+        setMeName(res.meName);
+      } else {
+        setSendNote("Couldn't load thread: " + res.error);
+      }
+    } catch (e) {
+      setSendNote((e as Error).message);
+    } finally {
+      setLoadingThread(false);
+    }
   }
 
-  const unreadCount = messages.filter((m) => m.unread).length;
+  async function doSend() {
+    if (!active || !draft.trim() || !cookies) return;
+    setSending(true);
+    setSendNote("");
+    const text = draft.trim();
+    try {
+      const res = await send({
+        data: { cookies, threadUrl: active.threadUrl, message: text, headless: true },
+      });
+      if (res.success) {
+        setThread((t) => [...t, { from: "me", sender: meName || "You", text, time: "now" }]);
+        setDraft("");
+        setSendNote(`✓ Sent · ${res.remainingToday} messages left today`);
+      } else {
+        setSendNote("⚠ " + res.error);
+      }
+    } catch (e) {
+      setSendNote((e as Error).message);
+    } finally {
+      setSending(false);
+    }
+  }
+
+  const filtered = convos.filter(
+    (c) => !search || c.name.toLowerCase().includes(search.toLowerCase()),
+  );
+
+  if (!cookies) {
+    return (
+      <AppShell title="Inbox">
+        <div className="flex flex-1 flex-col items-center justify-center gap-3 text-muted-foreground">
+          <Linkedin className="h-10 w-10 text-[#0A66C2] opacity-60" />
+          <p className="text-sm font-medium text-foreground">Connect LinkedIn to load your inbox</p>
+          <p className="text-xs">Use the “Connect to LinkedIn” button in the top-right header.</p>
+        </div>
+      </AppShell>
+    );
+  }
 
   return (
-    <AppShell
-      title="Inbox"
-      rightSlot={unreadCount > 0 ? <Badge>{unreadCount} unread</Badge> : undefined}
-    >
-      <div className="mx-auto max-w-3xl space-y-6 px-6 py-6">
+    <AppShell title="Unified Inbox">
+      <div className="flex min-h-0 flex-1">
+        {/* LEFT: conversation list */}
+        <div
+          className={`flex w-full flex-col border-r md:w-80 ${active ? "hidden md:flex" : "flex"}`}
+        >
+          <div className="flex items-center gap-2 border-b p-3">
+            <div className="relative flex-1">
+              <MessageCircle className="absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
+              <Input
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                placeholder="Search contacts…"
+                className="h-9 pl-8 text-sm"
+              />
+            </div>
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={loadList}
+              disabled={loadingList}
+              className="h-9 gap-1.5"
+            >
+              <RefreshCw className={`h-3.5 w-3.5 ${loadingList ? "animate-spin" : ""}`} />
+            </Button>
+          </div>
+          <div className="border-b bg-amber-500/10 px-3 py-2 text-[11px] text-amber-700 dark:text-amber-300">
+            Inbox sync is paused for the demo path. Click refresh only when you explicitly want to
+            fetch conversations.
+          </div>
 
-        {/* LinkedIn Received Messages */}
-        <section>
-          <h2 className="mb-3 text-xs font-semibold uppercase tracking-wider text-muted-foreground flex items-center gap-2">
-            <MessageCircle className="h-3.5 w-3.5" />
-            LinkedIn Messages
-          </h2>
-          <div className="space-y-2">
-            {messages.map((msg) => (
-              <Card
-                key={msg.id}
-                className={`cursor-pointer transition-colors hover:bg-muted/50 ${msg.unread ? "border-primary/40 bg-primary/5" : ""}`}
-                onClick={() => markRead(msg.id)}
-              >
-                <div className="p-4">
-                  <div className="flex items-start justify-between gap-3">
-                    <div className="flex items-center gap-3 min-w-0">
-                      <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-primary/10 text-sm font-semibold text-primary">
-                        {msg.fromName.charAt(0)}
-                      </div>
-                      <div className="min-w-0">
-                        <div className="flex items-center gap-2">
-                          <p className="text-sm font-medium truncate">{msg.fromName}</p>
-                          {msg.unread && <span className="h-2 w-2 rounded-full bg-primary shrink-0" />}
-                        </div>
-                        <p className="text-[11px] text-muted-foreground truncate">{msg.fromHeadline}</p>
-                      </div>
+          <div className="min-h-0 flex-1 overflow-auto">
+            {loadingList && (
+              <div className="flex items-center justify-center gap-2 p-8 text-sm text-muted-foreground">
+                <Loader2 className="h-4 w-4 animate-spin" /> Loading conversations…
+              </div>
+            )}
+            {listError && (
+              <div className="m-3 rounded-lg border border-red-200 bg-red-50 p-3 text-xs text-red-700 dark:border-red-900 dark:bg-red-950/30 dark:text-red-300">
+                <div className="flex items-start gap-2">
+                  <AlertCircle className="h-4 w-4 shrink-0" />
+                  <span>{listError}</span>
+                </div>
+              </div>
+            )}
+            {!loadingList &&
+              filtered.map((c) => (
+                <button
+                  key={c.id}
+                  onClick={() => openThread(c)}
+                  className={`flex w-full items-center gap-3 border-b px-3 py-3 text-left transition hover:bg-muted/50 ${
+                    active?.id === c.id ? "bg-muted" : ""
+                  }`}
+                >
+                  <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-primary/10 text-sm font-semibold text-primary">
+                    {c.name.charAt(0)}
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="truncate text-sm font-medium text-foreground">{c.name}</span>
+                      <span className="shrink-0 text-[10px] text-muted-foreground">{c.time}</span>
                     </div>
-                    <div className="flex items-center gap-2 shrink-0">
-                      <span className="text-[10px] text-muted-foreground">{timeAgo(msg.timestamp)}</span>
-                      {expanded === msg.id ? <ChevronUp className="h-3.5 w-3.5 text-muted-foreground" /> : <ChevronDown className="h-3.5 w-3.5 text-muted-foreground" />}
+                    <p className="truncate text-xs text-muted-foreground">{c.preview}</p>
+                  </div>
+                  {c.unread && <span className="h-2 w-2 shrink-0 rounded-full bg-primary" />}
+                </button>
+              ))}
+            {!loadingList && !listError && filtered.length === 0 && (
+              <div className="p-8 text-center text-sm text-muted-foreground">No conversations.</div>
+            )}
+          </div>
+        </div>
+
+        {/* RIGHT: chat thread + composer */}
+        <div className={`flex min-w-0 flex-1 flex-col ${active ? "flex" : "hidden md:flex"}`}>
+          {!active ? (
+            <div className="flex flex-1 flex-col items-center justify-center gap-2 text-muted-foreground">
+              <InboxIcon className="h-10 w-10 opacity-30" />
+              <p className="text-sm">Select a conversation to view the thread</p>
+            </div>
+          ) : (
+            <>
+              <div className="flex items-center gap-3 border-b p-3">
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="md:hidden"
+                  onClick={() => setActive(null)}
+                >
+                  <ArrowLeft className="h-4 w-4" />
+                </Button>
+                <div className="flex h-9 w-9 items-center justify-center rounded-full bg-primary/10 text-sm font-semibold text-primary">
+                  {active.name.charAt(0)}
+                </div>
+                <div className="min-w-0">
+                  <p className="truncate text-sm font-medium text-foreground">{active.name}</p>
+                  <span className="text-[10px] text-muted-foreground">LinkedIn</span>
+                </div>
+                <a
+                  href={active.threadUrl}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="ml-auto text-xs text-muted-foreground hover:text-primary"
+                >
+                  Open on LinkedIn ↗
+                </a>
+              </div>
+
+              <div className="min-h-0 flex-1 space-y-3 overflow-auto p-4">
+                {loadingThread && (
+                  <div className="flex items-center justify-center gap-2 py-8 text-sm text-muted-foreground">
+                    <Loader2 className="h-4 w-4 animate-spin" /> Loading thread…
+                  </div>
+                )}
+                {thread.map((m, i) => (
+                  <div
+                    key={i}
+                    className={`flex ${m.from === "me" ? "justify-end" : "justify-start"}`}
+                  >
+                    <div
+                      className={`max-w-[75%] rounded-2xl px-3.5 py-2 text-sm ${
+                        m.from === "me"
+                          ? "bg-primary text-primary-foreground"
+                          : "bg-muted text-foreground"
+                      }`}
+                    >
+                      <p className="whitespace-pre-wrap">{m.text}</p>
+                      {m.time && (
+                        <span
+                          className={`mt-1 block text-[10px] ${m.from === "me" ? "text-primary-foreground/70" : "text-muted-foreground"}`}
+                        >
+                          {m.time}
+                        </span>
+                      )}
                     </div>
                   </div>
-                  {expanded !== msg.id && (
-                    <p className="mt-2 text-xs text-muted-foreground truncate pl-12">{msg.preview}</p>
-                  )}
-                  {expanded === msg.id && (
-                    <div className="mt-3 space-y-2 pl-12">
-                      {msg.thread.map((t, i) => (
-                        <div key={i} className={`flex ${t.from === "me" ? "justify-end" : "justify-start"}`}>
-                          <div className={`max-w-[80%] rounded-xl px-3 py-2 text-xs ${
-                            t.from === "me"
-                              ? "bg-primary text-primary-foreground"
-                              : "bg-muted text-foreground"
-                          }`}>
-                            {t.text}
-                          </div>
-                        </div>
-                      ))}
-                      <div className="flex gap-2 pt-1">
-                        <Button size="sm" variant="outline" className="h-7 text-xs flex-1">Reply</Button>
-                      </div>
-                    </div>
-                  )}
+                ))}
+              </div>
+
+              <div className="border-t p-3">
+                {sendNote && (
+                  <p
+                    className={`mb-2 text-xs ${sendNote.startsWith("✓") ? "text-emerald-600" : "text-amber-600"}`}
+                  >
+                    {sendNote}
+                  </p>
+                )}
+                <div className="flex items-end gap-2">
+                  <textarea
+                    value={draft}
+                    onChange={(e) => setDraft(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) void doSend();
+                    }}
+                    rows={2}
+                    maxLength={2000}
+                    placeholder={`Reply to ${active.name}…  (Ctrl+Enter to send)`}
+                    className="flex-1 resize-none rounded-lg border bg-background px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-primary/30"
+                  />
+                  <Button onClick={doSend} disabled={sending || !draft.trim()} className="gap-1.5">
+                    {sending ? (
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                    ) : (
+                      <Send className="h-4 w-4" />
+                    )}
+                    Send
+                  </Button>
                 </div>
-              </Card>
-            ))}
-          </div>
-        </section>
-
-        {/* Sent by Agent */}
-        {sent.length > 0 && (
-          <section>
-            <h2 className="mb-3 text-xs font-semibold uppercase tracking-wider text-muted-foreground flex items-center gap-2">
-              <Send className="h-3.5 w-3.5" />
-              Sent by Agent
-            </h2>
-            <div className="space-y-2">
-              {sent.map((a) => {
-                const Icon = a.type === "profile_view" ? Eye : a.type === "email" ? MailCheck : Send;
-                return (
-                  <Card key={a.id} className="p-4">
-                    <div className="mb-1 flex items-center justify-between">
-                      <div className="flex items-center gap-2">
-                        <Icon className="h-4 w-4 text-emerald-600" />
-                        <p className="text-sm font-medium">{a.target_name}</p>
-                      </div>
-                      <span className="text-[10px] text-muted-foreground">
-                        {a.sent_at ? timeAgo(a.sent_at) : ""}
-                      </span>
-                    </div>
-                    <p className="text-xs text-muted-foreground">{a.channel}</p>
-                    {a.subject && <p className="mt-2 text-xs font-medium">Subject: {a.subject}</p>}
-                    <p className="mt-1 whitespace-pre-wrap rounded bg-muted p-2 text-xs">{a.body}</p>
-                  </Card>
-                );
-              })}
-            </div>
-          </section>
-        )}
-
-        {sent.length === 0 && messages.length === 0 && (
-          <Card className="flex flex-col items-center gap-3 p-12 text-center">
-            <MailCheck className="h-8 w-8 text-muted-foreground" />
-            <p className="text-sm font-medium">No messages yet</p>
-          </Card>
-        )}
+                <p className="mt-1 text-[10px] text-muted-foreground">
+                  Sends through a stealth browser to the real LinkedIn thread · cap-gated by warmup
+                  ramp · {draft.length}/2000
+                </p>
+              </div>
+            </>
+          )}
+        </div>
       </div>
     </AppShell>
   );

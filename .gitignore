@@ -15,6 +15,14 @@ dist-ssr
 .tanstack/**
 .nitro
 *.local
+.env
+.env.*
+!.env.example
+
+# Local runtime state and test artifacts. These may contain cookies, API keys,
+# captured browser state, queue state, or Playwright snapshots.
+.sherpa/
+.playwright-mcp/
 
 # Wrangler / Cloudflare
 .wrangler/
