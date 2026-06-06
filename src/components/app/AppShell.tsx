@@ -23,7 +23,6 @@ import {
 
 import { useStore, warmupDay, todaysUsage, effectiveCaps } from "@/lib/store";
 import crockbotLogo from "@/assets/crockbot-logo.png";
-import { LinkedInSignInDialog } from "@/components/app/LinkedInSignInDialog";
 
 const nav = [
   { to: "/", label: "AI Agent", icon: MessageSquareText, exact: true },
@@ -228,17 +227,13 @@ export function AppShell({
                 Connected to LinkedIn
               </span>
             ) : (
-              <LinkedInSignInDialog
-                trigger={
-                  <button
-                    type="button"
-                    className="flex items-center gap-1.5 rounded-md px-2 py-1 text-muted-foreground transition hover:bg-muted hover:text-foreground"
-                  >
-                    <span className="h-2 w-2 rounded-full bg-amber-500" />
-                    Not connected
-                  </button>
-                }
-              />
+              <Link
+                to="/onboarding"
+                className="flex items-center gap-1.5 rounded-md px-2 py-1 text-muted-foreground transition hover:bg-muted hover:text-foreground"
+              >
+                <span className="h-2 w-2 rounded-full bg-amber-500" />
+                Not connected
+              </Link>
             )}
           </div>
         </header>

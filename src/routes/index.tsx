@@ -158,7 +158,13 @@ function Index() {
       {(!onboarded || !session.connected) && (
         <div className="border-b bg-amber-50 px-6 py-2 text-xs text-amber-900 dark:bg-amber-950/30 dark:text-amber-200">
           {!session.connected ? (
-            <>No LinkedIn session linked. Enter your credentials to enable real sends.</>
+            <>
+              No LinkedIn account linked. Connect through{" "}
+              <Link to="/onboarding" className="underline">
+                onboarding
+              </Link>{" "}
+              to enable approved sends.
+            </>
           ) : (
             <>
               Finish{" "}
