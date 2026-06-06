@@ -6,7 +6,18 @@ import reactRefresh from "eslint-plugin-react-refresh";
 import tseslint from "typescript-eslint";
 
 export default tseslint.config(
-  { ignores: ["dist", ".output", ".vinxi", ".sherpa", ".playwright-mcp"] },
+  {
+    ignores: [
+      "dist",
+      ".output",
+      ".tanstack",
+      ".vercel",
+      ".vinxi",
+      ".wrangler",
+      ".sherpa",
+      ".playwright-mcp",
+    ],
+  },
   {
     extends: [js.configs.recommended, ...tseslint.configs.recommended],
     files: ["**/*.{ts,tsx}"],
