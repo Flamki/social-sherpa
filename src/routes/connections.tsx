@@ -88,6 +88,9 @@ function ConnectionsPage() {
   const [headful, setHeadful] = useState(false);
   const [proxyTest, setProxyTest] = useState<"idle" | "testing" | "ok" | "err">("idle");
   const [proxyTestMsg, setProxyTestMsg] = useState("");
+  const cookieImportHostedDisabled =
+    typeof window !== "undefined" &&
+    !["localhost", "127.0.0.1", "::1"].includes(window.location.hostname);
 
   function currentCookies() {
     return session.cookies || { li_at: liAt, JSESSIONID: jSessionId };
@@ -262,6 +265,13 @@ function ConnectionsPage() {
   }
 
   async function startRealSync(force = false) {
+    if (cookieImportHostedDisabled) {
+      setStatusMsg(
+        "Cookie import is local-only on the hosted demo because Vercel cannot run a persistent Chrome profile. Use Onboarding > Connect LinkedIn for live action execution, or Load sample network for the assignment demo.",
+      );
+      return;
+    }
+
     const cookiesToUse = currentCookies();
     if (!cookiesToUse.li_at || !cookiesToUse.JSESSIONID) {
       alert("Please enter both li_at and JSESSIONID cookies.");
@@ -283,7 +293,7 @@ function ConnectionsPage() {
         },
       });
 
-      if (!res.success) throw new Error("Could not start import job.");
+      if (!res.success) throw new Error(res.error || "Could not start import job.");
 
       store.set((s) => ({
         ...s,
@@ -432,15 +442,25 @@ function ConnectionsPage() {
 
             <div className="mt-4 flex items-center justify-between gap-4">
               <p className="text-[10px] text-muted-foreground max-w-md">
-                Find these in Chrome DevTools: Application → Cookies → linkedin.com. We drive a
-                real, fingerprint-stable browser through your account's sticky proxy — no raw API
-                calls.
+                {cookieImportHostedDisabled
+                  ? "Cookie import needs a local Node process with Chrome. This hosted demo uses Unipile for approved sends and sample data for deterministic network search."
+                  : "Find these in Chrome DevTools: Application -> Cookies -> linkedin.com. We drive a real, fingerprint-stable browser through your account's sticky proxy - no raw API calls."}
               </p>
-              <Button onClick={() => startRealSync(false)} disabled={syncState === "syncing"}>
+              <Button
+                onClick={() => startRealSync(false)}
+                disabled={syncState === "syncing" || cookieImportHostedDisabled}
+                title={
+                  cookieImportHostedDisabled
+                    ? "Cookie import is local-only. Use onboarding or sample data on the hosted demo."
+                    : undefined
+                }
+              >
                 {syncState === "syncing" ? (
                   <>
                     <Loader2 className="h-4 w-4 animate-spin mr-2" /> Syncing
                   </>
+                ) : cookieImportHostedDisabled ? (
+                  "Local-only import"
                 ) : session.connected ? (
                   "Import Connections"
                 ) : (

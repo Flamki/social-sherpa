@@ -31,3 +31,7 @@ export function runtimeDataDir() {
   if (process.env.VERCEL) return path.join("/tmp", "social-sherpa");
   return path.join(process.cwd(), ".sherpa");
 }
+
+export function isVercelRuntime() {
+  return Boolean(process.env.VERCEL);
+}

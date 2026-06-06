@@ -1,6 +1,7 @@
 import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
 
+import { isVercelRuntime } from "./config.server";
 import { runLinkedInSync, type Lead, type SyncInput, type SyncResult } from "./linkedin.sync";
 
 type ImportJobStatus = "running" | "done" | "failed";
@@ -81,6 +82,14 @@ function startBackgroundImport(jobId: string, input: SyncInput) {
 export const startConnectionImportJob = createServerFn({ method: "POST" })
   .inputValidator(JobInputSchema)
   .handler(async ({ data }) => {
+    if (isVercelRuntime()) {
+      return {
+        success: false as const,
+        error:
+          "Cookie-based LinkedIn import is local-only on this hosted demo because Vercel serverless cannot launch a persistent Chrome profile. Use Onboarding > Connect LinkedIn for approved sends, or load the sample network for review.",
+      };
+    }
+
     pruneJobs();
     const existing = Array.from(jobs().values()).find((job) => job.status === "running");
     if (existing) {
