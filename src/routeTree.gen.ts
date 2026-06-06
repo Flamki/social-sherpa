@@ -15,6 +15,7 @@ import { Route as OnboardingRouteImport } from './routes/onboarding'
 import { Route as InboxRouteImport } from './routes/inbox'
 import { Route as ConnectionsRouteImport } from './routes/connections'
 import { Route as IndexRouteImport } from './routes/index'
+import { Route as ApiWebhooksUnipileRouteImport } from './routes/api/webhooks/unipile'
 import { Route as ApiPublicLinkSessionRouteImport } from './routes/api/public/link-session'
 
 const RequestsRoute = RequestsRouteImport.update({
@@ -47,6 +48,11 @@ const IndexRoute = IndexRouteImport.update({
   path: '/',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ApiWebhooksUnipileRoute = ApiWebhooksUnipileRouteImport.update({
+  id: '/api/webhooks/unipile',
+  path: '/api/webhooks/unipile',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const ApiPublicLinkSessionRoute = ApiPublicLinkSessionRouteImport.update({
   id: '/api/public/link-session',
   path: '/api/public/link-session',
@@ -61,6 +67,7 @@ export interface FileRoutesByFullPath {
   '/overview': typeof OverviewRoute
   '/requests': typeof RequestsRoute
   '/api/public/link-session': typeof ApiPublicLinkSessionRoute
+  '/api/webhooks/unipile': typeof ApiWebhooksUnipileRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
@@ -70,6 +77,7 @@ export interface FileRoutesByTo {
   '/overview': typeof OverviewRoute
   '/requests': typeof RequestsRoute
   '/api/public/link-session': typeof ApiPublicLinkSessionRoute
+  '/api/webhooks/unipile': typeof ApiWebhooksUnipileRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
@@ -80,6 +88,7 @@ export interface FileRoutesById {
   '/overview': typeof OverviewRoute
   '/requests': typeof RequestsRoute
   '/api/public/link-session': typeof ApiPublicLinkSessionRoute
+  '/api/webhooks/unipile': typeof ApiWebhooksUnipileRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
@@ -91,6 +100,7 @@ export interface FileRouteTypes {
     | '/overview'
     | '/requests'
     | '/api/public/link-session'
+    | '/api/webhooks/unipile'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
@@ -100,6 +110,7 @@ export interface FileRouteTypes {
     | '/overview'
     | '/requests'
     | '/api/public/link-session'
+    | '/api/webhooks/unipile'
   id:
     | '__root__'
     | '/'
@@ -109,6 +120,7 @@ export interface FileRouteTypes {
     | '/overview'
     | '/requests'
     | '/api/public/link-session'
+    | '/api/webhooks/unipile'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
@@ -119,6 +131,7 @@ export interface RootRouteChildren {
   OverviewRoute: typeof OverviewRoute
   RequestsRoute: typeof RequestsRoute
   ApiPublicLinkSessionRoute: typeof ApiPublicLinkSessionRoute
+  ApiWebhooksUnipileRoute: typeof ApiWebhooksUnipileRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -165,6 +178,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof IndexRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/api/webhooks/unipile': {
+      id: '/api/webhooks/unipile'
+      path: '/api/webhooks/unipile'
+      fullPath: '/api/webhooks/unipile'
+      preLoaderRoute: typeof ApiWebhooksUnipileRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/api/public/link-session': {
       id: '/api/public/link-session'
       path: '/api/public/link-session'
@@ -183,6 +203,7 @@ const rootRouteChildren: RootRouteChildren = {
   OverviewRoute: OverviewRoute,
   RequestsRoute: RequestsRoute,
   ApiPublicLinkSessionRoute: ApiPublicLinkSessionRoute,
+  ApiWebhooksUnipileRoute: ApiWebhooksUnipileRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)

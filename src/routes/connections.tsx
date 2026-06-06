@@ -397,6 +397,7 @@ function ConnectionsPage() {
                       onChange={(e) => setLiAt(e.target.value)}
                       placeholder="Paste li_at cookie…"
                       className="bg-background"
+                      disabled={cookieImportHostedDisabled}
                     />
                   </div>
                   <div className="space-y-1.5">
@@ -408,6 +409,7 @@ function ConnectionsPage() {
                       onChange={(e) => setJSessionId(e.target.value)}
                       placeholder="Paste JSESSIONID cookie…"
                       className="bg-background"
+                      disabled={cookieImportHostedDisabled}
                     />
                   </div>
                 </>
@@ -421,6 +423,7 @@ function ConnectionsPage() {
                   onChange={(e) => setSearchUrl(e.target.value)}
                   placeholder={FIRST_DEGREE_SEARCH_URL}
                   className="bg-background"
+                  disabled={cookieImportHostedDisabled}
                 />
                 <p className="text-[10px] text-muted-foreground ml-1">
                   Use the people search link with network=[&quot;F&quot;].
@@ -437,6 +440,7 @@ function ConnectionsPage() {
                   value={importLimit}
                   onChange={(e) => setImportLimit(Number(e.target.value) || 25)}
                   className="bg-background"
+                  disabled={cookieImportHostedDisabled}
                 />
                 <p className="text-[10px] text-muted-foreground ml-1">
                   Ask for 1-1000; the warmup cap still limits each run.
@@ -444,33 +448,48 @@ function ConnectionsPage() {
               </div>
             </div>
 
+            {cookieImportHostedDisabled && (
+              <div className="mt-4 rounded-lg border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-xs text-amber-100">
+                {
+                  "Hosted demo path: connect LinkedIn through Unipile from onboarding. Cookie import launches a local Chrome browser, so it is available only on localhost."
+                }
+              </div>
+            )}
+
             <div className="mt-4 flex items-center justify-between gap-4">
               <p className="text-[10px] text-muted-foreground max-w-md">
                 {cookieImportHostedDisabled
-                  ? "Cookie import needs a local Node process with Chrome. This hosted demo uses Unipile for approved sends and sample data for deterministic network search."
+                  ? "For the recruiter demo, use Unipile for live approved actions and Load sample network for deterministic search/ranking."
                   : "Find these in Chrome DevTools: Application -> Cookies -> linkedin.com. We drive a real, fingerprint-stable browser through your account's sticky proxy - no raw API calls."}
               </p>
-              <Button
-                onClick={() => startRealSync(false)}
-                disabled={syncState === "syncing" || cookieImportHostedDisabled}
-                title={
-                  cookieImportHostedDisabled
-                    ? "Cookie import is local-only. Use onboarding or sample data on the hosted demo."
-                    : undefined
-                }
-              >
-                {syncState === "syncing" ? (
-                  <>
-                    <Loader2 className="h-4 w-4 animate-spin mr-2" /> Syncing
-                  </>
-                ) : cookieImportHostedDisabled ? (
-                  "Local-only import"
-                ) : session.connected ? (
-                  "Import Connections"
-                ) : (
-                  "Connect & Import"
+              <div className="flex shrink-0 items-center gap-2">
+                {cookieImportHostedDisabled && (
+                  <Button asChild variant="secondary">
+                    <a href="/onboarding">Connect LinkedIn</a>
+                  </Button>
                 )}
-              </Button>
+                <Button
+                  onClick={() => startRealSync(false)}
+                  disabled={syncState === "syncing" || cookieImportHostedDisabled}
+                  title={
+                    cookieImportHostedDisabled
+                      ? "Cookie import is local-only. Use onboarding or sample data on the hosted demo."
+                      : undefined
+                  }
+                >
+                  {syncState === "syncing" ? (
+                    <>
+                      <Loader2 className="h-4 w-4 animate-spin mr-2" /> Syncing
+                    </>
+                  ) : cookieImportHostedDisabled ? (
+                    "Disabled on Vercel"
+                  ) : session.connected ? (
+                    "Import Connections"
+                  ) : (
+                    "Connect & Import"
+                  )}
+                </Button>
+              </div>
             </div>
           </Card>
         )}
