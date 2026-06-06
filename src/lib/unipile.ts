@@ -1,5 +1,6 @@
 import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
+import { runtimeDataDir } from "@/lib/config.server";
 
 type UnipileConfig = {
   enabled: boolean;
@@ -84,7 +85,7 @@ function errorFrom(raw: any, fallback: string) {
 
 async function storeEnv() {
   const [{ promises: fs }, path] = await Promise.all([import("node:fs"), import("node:path")]);
-  const dir = path.join(process.cwd(), ".sherpa", "unipile");
+  const dir = path.join(runtimeDataDir(), "unipile");
   await fs.mkdir(dir, { recursive: true });
   return {
     fs,
@@ -135,11 +136,11 @@ async function writeStoredAccount(account: UnipileAccount) {
   await fs.writeFile(accountFile, JSON.stringify(account, null, 2));
 }
 
-async function runtimeConfig(): Promise<UnipileConfig> {
+async function runtimeConfig(accountIdOverride?: string): Promise<UnipileConfig> {
   const base = unipileConfig();
   const provider = await providerConfig();
   const stored = await readStoredAccount();
-  const accountId = base.accountId || stored?.id || "";
+  const accountId = accountIdOverride?.trim() || base.accountId || stored?.id || "";
   return {
     ...base,
     dsn: provider.dsn,
@@ -149,8 +150,8 @@ async function runtimeConfig(): Promise<UnipileConfig> {
   };
 }
 
-export async function canUseUnipileConnector() {
-  const config = await runtimeConfig();
+export async function canUseUnipileConnector(accountIdOverride?: string) {
+  const config = await runtimeConfig(accountIdOverride);
   return config.enabled;
 }
 
@@ -285,8 +286,9 @@ export async function sendLinkedInMessageWithUnipile(input: {
   text: string;
   profileUrl?: string;
   threadUrl?: string;
+  accountId?: string;
 }): Promise<UnipileSendResult> {
-  const config = await runtimeConfig();
+  const config = await runtimeConfig(input.accountId);
   if (!config.enabled) {
     return {
       ok: false,

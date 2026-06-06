@@ -7,6 +7,7 @@
  */
 import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
+import { runtimeDataDir } from "@/lib/config.server";
 
 export type QueueStatus =
   | "pending"
@@ -44,7 +45,7 @@ const jitter = (min: number, max: number) => min + Math.random() * (max - min);
 
 async function fsEnv() {
   const [{ promises: fs }, path] = await Promise.all([import("node:fs"), import("node:path")]);
-  const queuePath = path.join(process.cwd(), ".sherpa", "queue", "actions.json");
+  const queuePath = path.join(runtimeDataDir(), "queue", "actions.json");
   return { fs, path, queuePath };
 }
 async function ensureDir() {
@@ -450,7 +451,8 @@ export const decideQueueAction = createServerFn({ method: "POST" })
   });
 
 const WorkerSchema = z.object({
-  cookies: z.object({ li_at: z.string().min(10), JSESSIONID: z.string().min(3) }),
+  cookies: z.object({ li_at: z.string().min(10), JSESSIONID: z.string().min(3) }).optional(),
+  unipileAccountId: z.string().min(1).optional(),
   headless: z.boolean().default(true),
 });
 
@@ -480,14 +482,17 @@ export const runWorkerOnce = createServerFn({ method: "POST" })
         if (!action.body) throw new Error("Message action missing body.");
         const { canUseUnipileConnector, sendLinkedInMessageWithUnipile } =
           await import("./unipile");
-        if (await canUseUnipileConnector()) {
+        if (await canUseUnipileConnector(data.unipileAccountId)) {
           const result = await sendLinkedInMessageWithUnipile({
             text: action.body,
             profileUrl: action.targetUrl,
             threadUrl: action.threadUrl,
+            accountId: data.unipileAccountId,
           });
           ok = result.ok;
           err = result.ok ? "" : result.error;
+        } else if (!data.cookies) {
+          throw new Error("Connect LinkedIn with Unipile or cookies before running this action.");
         } else if (!action.threadUrl) {
           const result = await sendMessageViaProfileUi(action, data.cookies, data.headless);
           ok = result.ok;
@@ -524,6 +529,9 @@ export const runWorkerOnce = createServerFn({ method: "POST" })
           err = ok ? "" : r.message;
         }
       } else if (action.type === "profile_view") {
+        if (!data.cookies) {
+          throw new Error("Profile views need a cookie-backed LinkedIn browser session.");
+        }
         if (!action.targetUrl) throw new Error("Profile view action missing targetUrl.");
         const { openLinkedIn, sleep: browserSleep } = await import("./linkedin.browser");
         const opened = await openLinkedIn({ cookies: data.cookies, headless: data.headless });
@@ -536,6 +544,9 @@ export const runWorkerOnce = createServerFn({ method: "POST" })
         await closeOpened(opened);
         ok = true;
       } else if (action.type === "connection_request") {
+        if (!data.cookies) {
+          throw new Error("Connection requests need a cookie-backed LinkedIn browser session.");
+        }
         const result = await sendConnectionRequestViaUi(action, data.cookies, data.headless);
         ok = result.ok;
         err = result.error || "";

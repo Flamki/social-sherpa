@@ -1,4 +1,5 @@
 import process from "node:process";
+import path from "node:path";
 
 // Server-only config. The .server.ts suffix prevents Vite from bundling
 // this file into the client — values here never reach the browser.
@@ -23,4 +24,10 @@ export function getServerConfig() {
     //   databaseUrl: process.env.DATABASE_URL,
     //   stripeSecretKey: process.env.STRIPE_SECRET_KEY,
   };
+}
+
+export function runtimeDataDir() {
+  if (process.env.SHERPA_DATA_DIR?.trim()) return process.env.SHERPA_DATA_DIR.trim();
+  if (process.env.VERCEL) return path.join("/tmp", "social-sherpa");
+  return path.join(process.cwd(), ".sherpa");
 }

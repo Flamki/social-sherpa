@@ -35,7 +35,9 @@ Then open:
 http://127.0.0.1:3000/onboarding
 ```
 
-Unipile provider settings can be saved from the onboarding screen. Runtime config, cookies, queues, and browser state are stored under `.sherpa/` and are intentionally ignored by Git.
+Unipile provider settings can be saved from the onboarding screen or configured with `UNIPILE_DSN` and `UNIPILE_API_KEY`. Runtime config, cookies, queues, and browser state are stored under `.sherpa/` locally and under `/tmp/social-sherpa` on Vercel unless `SHERPA_DATA_DIR` is set.
+
+For a multi-user production deployment, replace the runtime file store with Postgres/Supabase/Neon and run the queue worker from a durable background worker. The hosted demo path uses browser session state plus Unipile account IDs so a reviewer can connect, queue, approve, and send from the live URL.
 
 ## Demo Flow
 

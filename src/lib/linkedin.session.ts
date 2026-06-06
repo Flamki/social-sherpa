@@ -14,6 +14,7 @@ import { promises as fs } from "node:fs";
 import path from "node:path";
 import crypto from "node:crypto";
 import process from "node:process";
+import { runtimeDataDir } from "@/lib/config.server";
 
 export type ProxyConfig = {
   /** e.g. "brd.superproxy.io" */
@@ -64,7 +65,7 @@ export type AccountSession = {
   warmupStartedAt: string | null;
 };
 
-const DATA_DIR = path.join(process.cwd(), ".sherpa", "sessions");
+const DATA_DIR = path.join(runtimeDataDir(), "sessions");
 
 /** Stable, non-reversible account id from the li_at token. */
 export function accountIdFromCookie(li_at: string): string {

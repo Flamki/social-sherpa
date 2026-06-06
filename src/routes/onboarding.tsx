@@ -131,10 +131,15 @@ function Onboarding() {
       setConnectNote("Select a Unipile account first.");
       return;
     }
-    const res = await persistUnipileAccount({ data: { accountId } });
-    if (!res.success) {
-      setConnectNote(res.error);
-      return;
+    const selected = unipileAccounts.find((account) => account.id === accountId);
+    let displayName = selected?.name || selected?.username || "LinkedIn via Unipile";
+    let warning = "";
+    try {
+      const res = await persistUnipileAccount({ data: { accountId } });
+      if (res.success) displayName = res.account.name || res.account.username || displayName;
+      else warning = res.error;
+    } catch (e) {
+      warning = (e as Error).message;
     }
     store.set((s) => ({
       ...s,
@@ -142,9 +147,17 @@ function Onboarding() {
         ...s.session,
         connected: true,
         accountId,
-        displayName: res.account.name || res.account.username || "LinkedIn via Unipile",
+        displayName,
       },
     }));
+    if (warning) {
+      setConnectNote(
+        "LinkedIn account selected for this browser. Server persistence is temporary on this host: " +
+          warning,
+      );
+    } else {
+      setConnectNote("LinkedIn account selected. Approved message actions can use Unipile.");
+    }
     setStep(1);
   }
 

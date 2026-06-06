@@ -75,6 +75,7 @@ function timeAgo(ts?: string) {
 function RequestsPage() {
   const session = useStore((s) => s.session);
   const cookies = (session as any).cookies as { li_at: string; JSESSIONID: string } | undefined;
+  const canRunWorker = Boolean(cookies || session.accountId);
 
   const fetchQueue = useServerFn(listQueue);
   const decideQueue = useServerFn(decideQueueAction);
@@ -131,11 +132,11 @@ function RequestsPage() {
     void loadQueue();
   }, [loadQueue]);
   useEffect(() => {
-    if (!autoWorker || !cookies) return;
+    if (!autoWorker || !canRunWorker) return;
     const id = setInterval(() => void runWorker(), 120_000);
     return () => clearInterval(id);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [autoWorker, cookies]);
+  }, [autoWorker, canRunWorker]);
 
   async function decide(id: string, approve: boolean) {
     const res = await decideQueue({ data: { id, approve } });
@@ -149,11 +150,13 @@ function RequestsPage() {
   }
 
   async function runWorker() {
-    if (!cookies || workerBusy) return;
+    if (!canRunWorker || workerBusy) return;
     setWorkerBusy(true);
     setNote("");
     try {
-      const res = await workerOnce({ data: { cookies, headless: true } });
+      const res = await workerOnce({
+        data: { cookies, unipileAccountId: session.accountId, headless: true },
+      });
       if (res.ran) {
         setNote(
           res.success
@@ -186,11 +189,11 @@ function RequestsPage() {
   }
 
   const health = useMemo(() => {
-    if (!cookies) return "Connect LinkedIn first";
+    if (!canRunWorker) return "Connect LinkedIn first";
     if (approved.length > 0) return `${approved.length} approved / retrying`;
     if (pending.length > 0) return `${pending.length} awaiting approval`;
     return "Queue idle";
-  }, [cookies, approved.length, pending.length]);
+  }, [canRunWorker, approved.length, pending.length]);
 
   return (
     <AppShell
@@ -223,7 +226,7 @@ function RequestsPage() {
               <RefreshCw className={`mr-1 h-3.5 w-3.5 ${loadingInvites ? "animate-spin" : ""}`} />{" "}
               Requests
             </Button>
-            <Button size="sm" onClick={runWorker} disabled={!cookies || workerBusy}>
+            <Button size="sm" onClick={runWorker} disabled={!canRunWorker || workerBusy}>
               {workerBusy ? (
                 <Loader2 className="mr-1 h-3.5 w-3.5 animate-spin" />
               ) : (
@@ -235,7 +238,7 @@ function RequestsPage() {
               size="sm"
               variant={autoWorker ? "default" : "outline"}
               onClick={() => setAutoWorker((v) => !v)}
-              disabled={!cookies}
+              disabled={!canRunWorker}
             >
               <Clock className="mr-1 h-3.5 w-3.5" /> {autoWorker ? "Auto on" : "Auto off"}
             </Button>
@@ -248,11 +251,10 @@ function RequestsPage() {
           </div>
         )}
 
-        {!cookies && (
+        {!canRunWorker && (
           <Card className="mb-4 flex items-center gap-3 border-amber-500/30 bg-amber-500/10 p-4 text-sm text-amber-700 dark:text-amber-300">
             <AlertCircle className="h-4 w-4 shrink-0" />
-            Connect LinkedIn from the top-right header before fetching requests or running the
-            worker.
+            Connect LinkedIn through onboarding before fetching requests or running the worker.
           </Card>
         )}
 

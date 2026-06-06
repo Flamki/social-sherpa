@@ -6,8 +6,9 @@
 import { promises as fs } from "node:fs";
 import path from "node:path";
 import { openLinkedIn } from "./linkedin.browser";
+import { runtimeDataDir } from "@/lib/config.server";
 
-const DATA_DIR = path.join(process.cwd(), ".sherpa", "sessions");
+const DATA_DIR = path.join(runtimeDataDir(), "sessions");
 
 export async function getAllSessions() {
   try {
