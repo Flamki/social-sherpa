@@ -1,29 +1,27 @@
-// @lovable.dev/vite-tanstack-config already includes the following - do NOT add them manually
-// or the app will break with duplicate plugins:
-//   - tanstackStart, viteReact, tailwindcss, tsConfigPaths, nitro (build-only using cloudflare as a default target),
-//     componentTagger (dev-only), VITE_* env injection, @ path alias, React/TanStack dedupe,
-//     error logger plugins, and sandbox detection (port/host/strictPort).
-// You can pass additional config via defineConfig({ vite: { ... }, etc... }) if needed.
-import { defineConfig } from "@lovable.dev/vite-tanstack-config";
+import { tanstackStart } from "@tanstack/react-start/plugin/vite";
+import tailwindcss from "@tailwindcss/vite";
+import react from "@vitejs/plugin-react";
+import { defineConfig } from "vite";
+import tsConfigPaths from "vite-tsconfig-paths";
 
 export default defineConfig({
-  // Required for production SSR hosting. Without this, Vercel builds the assets
-  // but has no Nitro function/router output to serve the TanStack Start app.
-  nitro: { preset: "vercel" },
-  tanstackStart: {
-    // Redirect TanStack Start's bundled server entry to src/server.ts (our SSR error wrapper).
-    // nitro/vite builds from this
-    server: { entry: "server" },
-  },
+  plugins: [
+    tanstackStart({
+      // Redirect TanStack Start's bundled server entry to our SSR error wrapper.
+      server: { entry: "server" },
+    }),
+    react(),
+    tailwindcss(),
+    tsConfigPaths(),
+  ],
   // patchright + its native chromium driver must NOT be bundled by Vite/Nitro SSR.
   // Keep them as runtime requires on the server (they're only imported inside
   // server functions, never in the client). This fixes the chromium-bidi resolve error.
-  vite: {
-    ssr: {
-      external: ["patchright", "patchright-core", "playwright", "playwright-core", "chromium-bidi"],
-    },
-    optimizeDeps: {
-      exclude: ["patchright", "patchright-core", "playwright", "playwright-core", "chromium-bidi"],
-    },
+  ssr: {
+    external: ["patchright", "patchright-core", "playwright", "playwright-core", "chromium-bidi"],
   },
+  optimizeDeps: {
+    exclude: ["patchright", "patchright-core", "playwright", "playwright-core", "chromium-bidi"],
+  },
+  nitro: { preset: "vercel" },
 });

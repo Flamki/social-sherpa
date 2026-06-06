@@ -634,12 +634,11 @@ export const runAgent = createServerFn({ method: "POST" })
         ? `\n\nUSER CONTEXT: Account warmup day ${data.warmupDay} of 14. ${data.warmupDay < 5 ? "Strongly prefer profile_view actions; avoid invites." : "Limited messages allowed."}`
         : "";
 
-    // Priority: Fireworks > Anthropic > Lovable > offline
+    // Priority: Fireworks > Anthropic > deterministic offline fallback.
     const fireworksKey = process.env.FIREWORKS_API_KEY;
     const anthropicKey = process.env.ANTHROPIC_API_KEY;
-    const lovableKey = process.env.LOVABLE_API_KEY;
 
-    if (!fireworksKey && !anthropicKey && !lovableKey) {
+    if (!fireworksKey && !anthropicKey) {
       const result = offlineAgent(lastUserMsg?.content ?? "", pool);
       for (const action of result.actions) await queueActionForApproval(action);
       return result;
@@ -651,7 +650,7 @@ export const runAgent = createServerFn({ method: "POST" })
     ];
     const queuedActions: QueuedAction[] = [];
 
-    let provider: "fireworks" | "anthropic" | "lovable";
+    let provider: "fireworks" | "anthropic";
     let apiUrl: string;
     let model: string;
 
@@ -663,10 +662,6 @@ export const runAgent = createServerFn({ method: "POST" })
       provider = "anthropic";
       apiUrl = "https://api.anthropic.com/v1/messages";
       model = "claude-sonnet-4-20250514";
-    } else {
-      provider = "lovable";
-      apiUrl = "https://ai.gateway.lovable.dev/v1/chat/completions";
-      model = "google/gemini-2.5-flash";
     }
 
     for (let i = 0; i < 5; i++) {
@@ -698,11 +693,10 @@ export const runAgent = createServerFn({ method: "POST" })
           }),
         });
       } else {
-        const apiKey = provider === "fireworks" ? fireworksKey : lovableKey;
         res = await fetch(apiUrl, {
           method: "POST",
           headers: {
-            Authorization: `Bearer ${apiKey}`,
+            Authorization: `Bearer ${fireworksKey}`,
             "Content-Type": "application/json",
           },
           body: JSON.stringify({

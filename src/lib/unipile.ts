@@ -1,6 +1,5 @@
 import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
-import { runtimeDataDir } from "@/lib/config.server";
 
 type UnipileConfig = {
   enabled: boolean;
@@ -83,9 +82,15 @@ function errorFrom(raw: any, fallback: string) {
   return raw?.message || raw?.error || raw?.detail || raw?.title || fallback;
 }
 
+function runtimeDataDirForUnipile(path: typeof import("node:path")) {
+  if (process.env.SHERPA_DATA_DIR?.trim()) return process.env.SHERPA_DATA_DIR.trim();
+  if (process.env.VERCEL) return path.join("/tmp", "social-sherpa");
+  return path.join(process.cwd(), ".sherpa");
+}
+
 async function storeEnv() {
   const [{ promises: fs }, path] = await Promise.all([import("node:fs"), import("node:path")]);
-  const dir = path.join(runtimeDataDir(), "unipile");
+  const dir = path.join(runtimeDataDirForUnipile(path), "unipile");
   await fs.mkdir(dir, { recursive: true });
   return {
     fs,

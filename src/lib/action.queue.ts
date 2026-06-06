@@ -1,5 +1,5 @@
 ﻿/**
- * action.queue.ts â€” persistent, self-healing action queue (SERVER ONLY).
+ * action.queue.ts - persistent, self-healing action queue (SERVER ONLY).
  *
  * Botdog/PhantomBuster pattern: UI approves actions; a worker drains the queue
  * with caps, jitter, retries, and typed failures. Nothing writes to LinkedIn
@@ -7,7 +7,6 @@
  */
 import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
-import { runtimeDataDir } from "@/lib/config.server";
 
 export type QueueStatus =
   | "pending"
@@ -43,9 +42,15 @@ type QueueFile = { actions: QueueAction[] };
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 const jitter = (min: number, max: number) => min + Math.random() * (max - min);
 
+function queueRuntimeDataDir(path: typeof import("node:path")) {
+  if (process.env.SHERPA_DATA_DIR?.trim()) return process.env.SHERPA_DATA_DIR.trim();
+  if (process.env.VERCEL) return path.join("/tmp", "social-sherpa");
+  return path.join(process.cwd(), ".sherpa");
+}
+
 async function fsEnv() {
   const [{ promises: fs }, path] = await Promise.all([import("node:fs"), import("node:path")]);
-  const queuePath = path.join(runtimeDataDir(), "queue", "actions.json");
+  const queuePath = path.join(queueRuntimeDataDir(path), "queue", "actions.json");
   return { fs, path, queuePath };
 }
 async function ensureDir() {

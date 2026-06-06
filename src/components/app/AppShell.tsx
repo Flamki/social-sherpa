@@ -22,7 +22,6 @@ import {
 } from "@/components/ui/dropdown-menu";
 
 import { useStore, warmupDay, todaysUsage, effectiveCaps } from "@/lib/store";
-import crockbotLogo from "@/assets/crockbot-logo.png";
 
 const nav = [
   { to: "/", label: "AI Agent", icon: MessageSquareText, exact: true },
@@ -72,19 +71,17 @@ export function AppShell({
           collapsed ? "w-14" : "w-60"
         }`}
       >
-        <div className="relative flex h-16 items-center px-2">
+        <div className="relative flex h-16 items-center px-3">
           {!collapsed && (
-            <img
-              src={crockbotLogo}
-              alt=""
-              aria-hidden="true"
-              className="pointer-events-none absolute inset-x-2 top-1/2 -z-0 h-14 w-[calc(100%-1rem)] -translate-y-1/2 select-none object-contain opacity-60 dark:invert"
-            />
-          )}
-          {!collapsed && (
-            <span className="relative z-10 ml-10 text-lg font-extrabold tracking-tight text-foreground">
-              CrockBot
-            </span>
+            <div className="flex items-center gap-2">
+              <div className="flex h-9 w-9 items-center justify-center rounded-md bg-primary text-primary-foreground">
+                <MessageSquareText className="h-4 w-4" />
+              </div>
+              <div>
+                <div className="text-sm font-semibold leading-tight text-foreground">Network</div>
+                <div className="text-sm font-semibold leading-tight text-foreground">Manager</div>
+              </div>
+            </div>
           )}
           <button
             type="button"

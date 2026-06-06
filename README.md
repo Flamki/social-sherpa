@@ -1,26 +1,93 @@
-# CrockBot - LinkedIn Network Manager
+# LinkedIn Network Manager
 
-Prototype for a recruiter-facing LinkedIn network manager. It imports first-degree connections, lets an agent search/rank the local network, drafts outreach, and routes write actions through an explicit approval queue.
+An assignment-grade prototype for managing a LinkedIn network with an agent, deterministic search, approval-gated actions, and a production-safe execution boundary.
 
-## What Works
+The app answers questions over imported connections, creates auditable outreach intents, and sends approved LinkedIn messages through a connector layer when configured.
 
-- Import LinkedIn first-degree search results from an authenticated user session.
-- Normalize imported connections into a local searchable network.
-- Ask the agent network questions such as "top people working in supply chain".
-- Create deterministic action intents for messages and connection requests.
-- Review, approve, retry, and audit queued actions before execution.
-- Execute approved LinkedIn messages through Unipile when configured.
+## Live Demo
 
-## Architecture
+- App: https://social-sherpa-blond.vercel.app
+- Primary demo path: `Onboarding -> Connect LinkedIn -> AI Agent -> Requests`
+- Deterministic fallback: `Connections -> Load sample network`
 
-- `src/routes/index.tsx` - agent chat UI.
-- `src/routes/connections.tsx` - LinkedIn connection import and local network table.
+The hosted demo disables cookie-based browser import because Vercel serverless cannot run a persistent Chrome profile. Local development can still use the cookie/browser importer.
+
+## Core Capabilities
+
+- Search and rank imported first-degree LinkedIn connections.
+- Answer network questions such as "top 3 people working in supply chain".
+- Draft LinkedIn DMs and connection request notes.
+- Convert agent output into deterministic action intents.
+- Require explicit approval before any write action is executed.
+- Track action status, attempts, errors, timestamps, and next retry time.
+- Execute approved LinkedIn DMs through Unipile when configured.
+- Receive Unipile webhook events for messaging/status sync.
+
+## System Design
+
+```text
+User
+  |
+  v
+TanStack Start UI
+  |-- AI Agent page
+  |-- Connections page
+  |-- Requests approval queue
+  |-- Onboarding / provider connection
+  |
+  v
+Server Functions
+  |-- agent.functions.ts      -> intent parsing, search, ranking, tool calls
+  |-- action.queue.ts         -> approval queue, worker, retry state
+  |-- import.jobs.ts          -> local browser import jobs
+  |-- unipile.ts              -> hosted auth and final LinkedIn execution
+  |
+  v
+Execution Boundary
+  |-- Local only: Playwright/Patchright browser importer
+  |-- Hosted: Unipile connector for approved LinkedIn actions
+  |
+  v
+Runtime Store
+  |-- local: .sherpa/
+  |-- hosted demo: /tmp/social-sherpa
+```
+
+## Why The Execution Boundary Exists
+
+The agent never directly performs LinkedIn write actions. It can only create a queued intent. A separate worker executes approved actions and records the result.
+
+This separation keeps the system deterministic:
+
+- Agent reasoning is testable and auditable.
+- User approval is mandatory for outbound actions.
+- Failed sends remain visible with error details.
+- The execution provider can change without rewriting the agent.
+
+## Request Lifecycle
+
+```text
+drafted -> pending approval -> approved -> running -> sent
+                                      |         |
+                                      |         -> failed / retrying
+                                      -> cancelled
+```
+
+The agent can inspect queue state and should tell the user when an import or another action is already running. This avoids pretending that a message was sent before the worker actually marks it as `sent`.
+
+## Important Files
+
+- `src/routes/index.tsx` - chat interface for the network agent.
+- `src/routes/connections.tsx` - connection import UI and searchable table.
 - `src/routes/requests.tsx` - approval queue and worker controls.
-- `src/lib/agent.functions.ts` - deterministic agent tools and action creation.
-- `src/lib/action.queue.ts` - persistent action queue, status transitions, worker execution.
-- `src/lib/import.jobs.ts` - background import jobs that survive route changes.
-- `src/lib/linkedin.*.ts` - LinkedIn session/browser/read helpers.
-- `src/lib/unipile.ts` - hosted auth and final message execution connector.
+- `src/routes/onboarding.tsx` - provider connection flow.
+- `src/routes/api/webhooks/unipile.ts` - Unipile webhook receiver.
+- `src/lib/agent.functions.ts` - deterministic agent tools and fallback logic.
+- `src/lib/action.queue.ts` - queue state machine and execution worker.
+- `src/lib/import.jobs.ts` - browser import job orchestration.
+- `src/lib/linkedin.*.ts` - local browser/session helpers.
+- `src/lib/unipile.ts` - hosted LinkedIn connector integration.
+- `src/lib/mockConnections.ts` - deterministic demo data.
 
 ## Local Setup
 
@@ -29,25 +96,79 @@ npm install
 npm run dev -- --host 127.0.0.1 --port 3000
 ```
 
-Then open:
+Open:
 
 ```text
-http://127.0.0.1:3000/onboarding
+http://127.0.0.1:3000
 ```
 
-Unipile provider settings can be saved from the onboarding screen or configured with `UNIPILE_DSN` and `UNIPILE_API_KEY`. Runtime config, cookies, queues, and browser state are stored under `.sherpa/` locally and under `/tmp/social-sherpa` on Vercel unless `SHERPA_DATA_DIR` is set.
+## Environment
 
-For a multi-user production deployment, replace the runtime file store with Postgres/Supabase/Neon and run the queue worker from a durable background worker. The hosted demo path uses browser session state plus Unipile account IDs so a reviewer can connect, queue, approve, and send from the live URL.
+Copy `.env.example` to `.env.local` and configure only what you need.
 
-## Demo Flow
+```bash
+cp .env.example .env.local
+```
 
-1. Connect LinkedIn in onboarding.
-2. Import first-degree connections from the Connections page.
-3. Ask the agent to find/rank people in the network.
-4. Ask the agent to draft or queue a message.
-5. Approve the queued action in Requests.
-6. Run the worker and inspect sent/failed status.
+Common variables:
 
-## Notes
+- `FIREWORKS_API_KEY` - optional LLM provider for the agent.
+- `ANTHROPIC_API_KEY` - optional LLM provider for the agent.
+- `UNIPILE_ENABLED` - enables hosted action execution.
+- `UNIPILE_DSN` - Unipile API base URL.
+- `UNIPILE_API_KEY` - Unipile API key.
+- `UNIPILE_ACCOUNT_ID` - optional connected account id.
+- `UNIPILE_WEBHOOK_SECRET` - optional webhook token.
+- `SHERPA_DATA_DIR` - optional runtime data directory.
 
-LinkedIn write actions are intentionally separated from agent reasoning. The app owns search, ranking, queueing, approvals, and audit state. A connector can be used only for the final execution layer to avoid fragile cookie-based write automation.
+If no LLM key is present, the agent falls back to deterministic local logic for the assignment demo.
+
+## Unipile Webhook
+
+Create a Messaging webhook in Unipile:
+
+```text
+https://social-sherpa-blond.vercel.app/api/webhooks/unipile
+```
+
+If `UNIPILE_WEBHOOK_SECRET` is set, configure the URL as:
+
+```text
+https://social-sherpa-blond.vercel.app/api/webhooks/unipile?token=<secret>
+```
+
+The webhook route accepts account/message events and stores a lightweight runtime event log for demo inspection.
+
+## Hosted vs Local Behavior
+
+Hosted Vercel demo:
+
+- Uses Unipile for approved LinkedIn write actions.
+- Uses sample data for deterministic connection search when no account is connected.
+- Disables cookie-based browser import because serverless functions cannot keep Chrome/profile state alive.
+
+Local development:
+
+- Can run Playwright/Patchright browser flows.
+- Can import from an authenticated LinkedIn browser session.
+- Stores runtime state in `.sherpa/`.
+
+## Production Notes
+
+For a real multi-user deployment:
+
+- Replace the runtime file store with Postgres, Supabase, Neon, or another durable database.
+- Move the queue worker to a durable background worker.
+- Store provider tokens in encrypted server-side storage.
+- Use per-user Unipile accounts or another approved provider account mapping.
+- Persist webhook events and reconcile delivery status into the queue.
+- Add auth before exposing user data or queue controls.
+
+## Verification
+
+```bash
+npm run lint
+npm run build
+```
+
+Current lint output has existing warnings around `any` types and Fast Refresh component exports, but no blocking errors after cleanup.

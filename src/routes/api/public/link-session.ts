@@ -2,7 +2,7 @@ import { createFileRoute } from "@tanstack/react-router";
 import { z } from "zod";
 
 // In-memory bridge: the extension POSTs the cookies here; the frontend polls
-// /api/public/link-session?check=1 to pick them up. v0 is single-tenant demo only;
+// /api/public/link-session?check=1 to pick them up. This is a single-tenant demo bridge;
 // production must scope by signed workspace token and store server-side.
 let last: {
   capturedAt: string;
