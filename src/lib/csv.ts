@@ -1,4 +1,4 @@
-import type { Connection } from "./mockConnections";
+import type { Connection } from "./connections.types";
 
 // LinkedIn Connections.csv columns: First Name, Last Name, URL, Email Address, Company, Position, Connected On
 // We tolerate extra preamble lines that LinkedIn sometimes adds.

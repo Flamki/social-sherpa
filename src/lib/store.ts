@@ -1,6 +1,6 @@
 import { useSyncExternalStore } from "react";
 
-import { MOCK_CONNECTIONS, type Connection } from "./mockConnections";
+import type { Connection } from "./connections.types";
 
 export type ActionStatus = "pending" | "approved" | "sending" | "sent" | "rejected" | "failed";
 
@@ -38,7 +38,7 @@ export type SessionState = {
 };
 
 export type ConnectionsState = {
-  source: "mock" | "csv";
+  source: "linkedin" | "csv" | "unipile" | "none";
   uploadedAt?: string;
   items: Connection[];
 };
@@ -78,7 +78,7 @@ const DEFAULT: AppState = {
   session: { connected: false },
   caps: { invitesPerDay: 10, messagesPerDay: 20, profileViewsPerDay: 30 },
   warmup: { startedAt: null },
-  connections: { source: "mock", items: MOCK_CONNECTIONS },
+  connections: { source: "none", items: [] },
   actions: [],
   ops: { import: { status: "idle" } },
   daily: {},
@@ -98,7 +98,19 @@ function load() {
   if (typeof window === "undefined") return;
   try {
     const raw = window.localStorage.getItem(KEY);
-    if (raw) state = { ...DEFAULT, ...JSON.parse(raw) };
+    if (raw) {
+      state = { ...DEFAULT, ...JSON.parse(raw) };
+      // Older hosted builds seeded a fake demo network under source="mock".
+      // Clear it so the agent only reasons over real imported connections.
+      if ((state.connections as { source?: string }).source === "mock") {
+        state = {
+          ...state,
+          connections: { source: "none", items: [] },
+          ops: { ...state.ops, import: { status: "idle" } },
+        };
+        persist();
+      }
+    }
   } catch {
     /* noop */
   }

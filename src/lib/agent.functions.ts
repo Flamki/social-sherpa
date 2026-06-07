@@ -1,8 +1,8 @@
 import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
 
-import { MOCK_CONNECTIONS, type Connection } from "../lib/mockConnections";
 import { enqueueAction, readQueueActions } from "@/lib/action.queue";
+import type { Connection } from "@/lib/connections.types";
 
 const MessageSchema = z.object({
   role: z.enum(["system", "user", "assistant", "tool"]),
@@ -41,7 +41,8 @@ IMPORTANT RULES:
 - When the user asks for "top N" people, rank by tag relevance and seniority signals in headline.
 - After queueing actions, briefly tell the user what you queued and ask them to review the "Requests" tab to approve them.
 - If the user is in account warmup (early days), prefer queue_profile_view to gently warm targets before messaging.
-- For new connection requests, only queue if the user provides the target's full LinkedIn profile URL.`;
+- For new connection requests, only queue if the user provides the target's full LinkedIn profile URL.
+- Use only the imported connections passed to you. If there are no imported connections, say that clearly and do not invent examples.`;
 
 function firstName(name: string) {
   return name.trim().split(/\s+/)[0] || name || "there";
@@ -468,14 +469,19 @@ function executeTool(
 }
 
 // ── Offline fallback: deterministic agent (no API key needed for demo) ────────
+// Offline fallback: deterministic agent when no API key is configured.
 function offlineAgent(
   userMessage: string,
   pool: Connection[],
 ): { assistant: string; actions: QueuedAction[] } {
   const lower = userMessage.toLowerCase();
+  const trimmed = userMessage.trim();
   const topN = lower.match(/top\s+(\d+)/)?.[1];
-  const limit = topN ? parseInt(topN) : 10;
+  const limit = topN ? parseInt(topN, 10) : 10;
 
+  const isGreeting =
+    /^(hi|hey|hello|yo|sup|what|ok|okay)\??$/i.test(trimmed) ||
+    /\b(are you live|you there|are you working)\b/i.test(lower);
   const wantsMessage =
     lower.includes("message") ||
     lower.includes("dm") ||
@@ -483,14 +489,6 @@ function offlineAgent(
     lower.includes("contact") ||
     lower.includes("send");
   const wantsEmail = lower.includes("email") || lower.includes("mail");
-  const wantsList =
-    lower.includes("list") ||
-    lower.includes("show") ||
-    lower.includes("find") ||
-    lower.includes("give") ||
-    lower.includes("who") ||
-    lower.includes("top") ||
-    lower.includes("all");
   const wantsInbox =
     lower.includes("inbox") || lower.includes("summarize") || lower.includes("summary");
 
@@ -502,16 +500,24 @@ function offlineAgent(
     };
   }
 
-  // "list my connections" / "show all"
+  if (isGreeting) {
+    return {
+      assistant: pool.length
+        ? `I'm live. I can search and queue actions for your ${pool.length} imported LinkedIn connection${pool.length === 1 ? "" : "s"}. Try "list my connections" or "send hi to [name]".`
+        : "I'm live, but I don't have any real imported LinkedIn connections yet. Connect/sync LinkedIn from Connections first, then I can search, rank, and queue actions.",
+      actions: [],
+    };
+  }
+
   const wantsAllConnections =
-    /\b(list|show|all|who)\b.*\b(connection|contact|people|network)\b/i.test(lower) ||
+    /\b(list|show|all|who|top|find|give)\b.*\b(connection|contact|people|network)\b/i.test(lower) ||
     /\b(connection|contact)\b.*\b(list|show|all)\b/i.test(lower);
 
-  if (wantsAllConnections || (wantsList && !wantsMessage && !wantsEmail)) {
+  if (wantsAllConnections && !wantsMessage && !wantsEmail) {
     if (!pool.length) {
       return {
         assistant:
-          "You don't have any imported connections yet. Go to **Connections** and sync your LinkedIn account first.",
+          "You don't have any real imported connections yet. Go to Connections and sync/import LinkedIn first.",
         actions: [],
       };
     }
@@ -519,38 +525,32 @@ function offlineAgent(
     const list = showing
       .map(
         (c, i) =>
-          `${i + 1}. **${c.name}** — ${c.headline || "—"} ${c.company ? `@ ${c.company}` : ""}`,
+          `${i + 1}. **${c.name}** - ${c.headline || "-"} ${c.company ? `@ ${c.company}` : ""}`,
       )
       .join("\n");
     const moreNote =
-      pool.length > showing.length ? `\n\n…and ${pool.length - showing.length} more.` : "";
+      pool.length > showing.length ? `\n\n...and ${pool.length - showing.length} more.` : "";
     return {
-      assistant: `Here are your ${showing.length} connection${showing.length === 1 ? "" : "s"}:\n\n${list}${moreNote}\n\nWant me to draft outreach for any of them?`,
+      assistant: `Here are your ${showing.length} imported connection${showing.length === 1 ? "" : "s"}:\n\n${list}${moreNote}\n\nWant me to draft outreach for any of them?`,
       actions: [],
     };
   }
 
-  // Fallback
   if (!pool.length) {
     return {
       assistant:
-        "I don't have any imported connections yet. Go to **Connections** and sync your LinkedIn account, then come back.",
+        "I don't have any real imported connections yet. Go to Connections and sync/import LinkedIn, then ask me to search or queue outreach.",
       actions: [],
     };
   }
-  const showing = pool.slice(0, 5);
-  const list = showing
-    .map(
-      (c, i) =>
-        `${i + 1}. **${c.name}** — ${c.headline || "—"} ${c.company ? `@ ${c.company}` : ""}`,
-    )
-    .join("\n");
+
   return {
-    assistant: `I have ${pool.length} connection${pool.length === 1 ? "" : "s"} imported:\n\n${list}\n\nTry: "list all my connections", "send [name] hi", or "message my connections"`,
+    assistant:
+      `I have ${pool.length} imported connection${pool.length === 1 ? "" : "s"}. ` +
+      'Tell me the exact network task, for example: "list my connections", "top 3 supply chain contacts", or "send hi to [name]".',
     actions: [],
   };
 }
-
 const ConnectionSchema = z.object({
   id: z.string(),
   name: z.string(),
@@ -605,9 +605,7 @@ export const runAgent = createServerFn({ method: "POST" })
     }),
   )
   .handler(async ({ data }) => {
-    const pool: Connection[] = (
-      data.connections?.length ? data.connections : MOCK_CONNECTIONS
-    ) as Connection[];
+    const pool: Connection[] = (data.connections || []) as Connection[];
     const lastUserMsg = [...data.messages].reverse().find((m) => m.role === "user");
     const serverQueue = await readQueueActions().catch(() => []);
     const queueContext: QueueContext = serverQueue.length

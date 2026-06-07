@@ -21,7 +21,6 @@ import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { store, useStore } from "@/lib/store";
-import { MOCK_CONNECTIONS } from "@/lib/mockConnections";
 import { getConnectionImportJob, startConnectionImportJob } from "@/lib/import.jobs";
 import { saveProxyConfig, getSessionInfo } from "@/lib/linkedin.config";
 import { testProxy } from "@/lib/linkedin.proxy.fn";
@@ -109,7 +108,7 @@ function ConnectionsPage() {
         ...s,
         session: { ...s.session, connected: true, cookies: cookiesToUse },
         connections: {
-          source: "mock",
+          source: "linkedin",
           uploadedAt: new Date().toISOString(),
           items: res.items as any,
         },
@@ -271,7 +270,7 @@ function ConnectionsPage() {
   async function startRealSync(force = false) {
     if (cookieImportHostedDisabled) {
       setStatusMsg(
-        "Cookie import is local-only on the hosted demo because Vercel cannot run a persistent Chrome profile. Use Onboarding > Connect LinkedIn for live action execution, or Load sample network for the assignment demo.",
+        "Cookie import is local-only on the hosted app because Vercel cannot run a persistent Chrome profile. Use Onboarding > Connect LinkedIn for live approved actions.",
       );
       return;
     }
@@ -340,29 +339,6 @@ function ConnectionsPage() {
       }));
     }
   }
-  function loadSampleNetwork(message = "Loaded sample network for the assignment demo.") {
-    store.set((s) => ({
-      ...s,
-      connections: {
-        source: "mock",
-        uploadedAt: new Date().toISOString(),
-        items: MOCK_CONNECTIONS as any,
-      },
-      ops: {
-        ...s.ops,
-        import: {
-          status: "done",
-          finishedAt: new Date().toISOString(),
-          requestedCount: MOCK_CONNECTIONS.length,
-          importedCount: MOCK_CONNECTIONS.length,
-          totalAvailable: MOCK_CONNECTIONS.length,
-          message: "Sample network loaded.",
-        },
-      },
-    }));
-    setStatusMsg(`✓ ${message}`);
-  }
-
   const filtered = useMemo(() => {
     return (conns.items || []).filter((c) => {
       if (!search) return true;
@@ -459,7 +435,7 @@ function ConnectionsPage() {
             <div className="mt-4 flex items-center justify-between gap-4">
               <p className="text-[10px] text-muted-foreground max-w-md">
                 {cookieImportHostedDisabled
-                  ? "For the recruiter demo, use Unipile for live approved actions and Load sample network for deterministic search/ranking."
+                  ? "For hosted production, use Unipile for live approved actions. Cookie/browser import remains available locally."
                   : "Find these in Chrome DevTools: Application -> Cookies -> linkedin.com. We drive a real, fingerprint-stable browser through your account's sticky proxy - no raw API calls."}
               </p>
               <div className="flex shrink-0 items-center gap-2">
@@ -473,7 +449,7 @@ function ConnectionsPage() {
                   disabled={syncState === "syncing" || cookieImportHostedDisabled}
                   title={
                     cookieImportHostedDisabled
-                      ? "Cookie import is local-only. Use onboarding or sample data on the hosted demo."
+                      ? "Cookie import is local-only. Use onboarding for hosted live action execution."
                       : undefined
                   }
                 >
@@ -682,9 +658,6 @@ function ConnectionsPage() {
               <RefreshCw className={`h-4 w-4 ${syncState === "syncing" ? "animate-spin" : ""}`} />
               {syncState === "syncing" ? "Syncing…" : "Sync LinkedIn"}
             </Button>
-            <Button onClick={() => loadSampleNetwork()} variant="secondary" size="sm">
-              Load sample network
-            </Button>
           </div>
         </div>
 
@@ -749,9 +722,6 @@ function ConnectionsPage() {
               <p className="text-sm">
                 No connections found. Sync your account to start lead search.
               </p>
-              <Button size="sm" variant="secondary" onClick={() => loadSampleNetwork()}>
-                Load sample network
-              </Button>
             </div>
           )}
         </Card>

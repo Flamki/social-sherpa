@@ -86,7 +86,7 @@ export const startConnectionImportJob = createServerFn({ method: "POST" })
       return {
         success: false as const,
         error:
-          "Cookie-based LinkedIn import is local-only on this hosted demo because Vercel serverless cannot launch a persistent Chrome profile. Use Onboarding > Connect LinkedIn for approved sends, or load the sample network for review.",
+          "Cookie-based LinkedIn import is local-only on the hosted app because Vercel serverless cannot launch a persistent Chrome profile. Use Onboarding > Connect LinkedIn for approved sends.",
       };
     }
 

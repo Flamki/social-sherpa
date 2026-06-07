@@ -8,9 +8,8 @@ The app answers questions over imported connections, creates auditable outreach 
 
 - App: https://social-sherpa-blond.vercel.app
 - Primary demo path: `Onboarding -> Connect LinkedIn -> AI Agent -> Requests`
-- Deterministic fallback: `Connections -> Load sample network`
 
-The hosted demo disables cookie-based browser import because Vercel serverless cannot run a persistent Chrome profile. Local development can still use the cookie/browser importer.
+The hosted app disables cookie-based browser import because Vercel serverless cannot run a persistent Chrome profile. Local development can still use the cookie/browser importer.
 
 ## Core Capabilities
 
@@ -50,7 +49,7 @@ Execution Boundary
   v
 Runtime Store
   |-- local: .sherpa/
-  |-- hosted demo: /tmp/social-sherpa
+  |-- hosted: /tmp/social-sherpa
 ```
 
 ## Why The Execution Boundary Exists
@@ -87,7 +86,6 @@ The agent can inspect queue state and should tell the user when an import or ano
 - `src/lib/import.jobs.ts` - browser import job orchestration.
 - `src/lib/linkedin.*.ts` - local browser/session helpers.
 - `src/lib/unipile.ts` - hosted LinkedIn connector integration.
-- `src/lib/mockConnections.ts` - deterministic demo data.
 
 ## Local Setup
 
@@ -121,7 +119,7 @@ Common variables:
 - `UNIPILE_WEBHOOK_SECRET` - optional webhook token.
 - `SHERPA_DATA_DIR` - optional runtime data directory.
 
-If no LLM key is present, the agent falls back to deterministic local logic for the assignment demo.
+If no LLM key is present, the agent falls back to deterministic local logic over real imported connections only.
 
 ## Unipile Webhook
 
@@ -141,10 +139,9 @@ The webhook route accepts account/message events and stores a lightweight runtim
 
 ## Hosted vs Local Behavior
 
-Hosted Vercel demo:
+Hosted Vercel:
 
 - Uses Unipile for approved LinkedIn write actions.
-- Uses sample data for deterministic connection search when no account is connected.
 - Disables cookie-based browser import because serverless functions cannot keep Chrome/profile state alive.
 
 Local development:
