@@ -71,23 +71,29 @@ function formatImportDiagnostic(diag: ImportDiagnostic) {
   const base =
     diag.stopReason === "requested-limit-reached"
       ? "requested import count reached"
-      : diag.stopReason === "linkedin-showed-no-next-page"
-        ? "LinkedIn showed no next page"
-        : diag.stopReason === "linkedin-page-did-not-advance"
-          ? "LinkedIn kept returning the same page after Next and direct-page fallback"
-          : diag.stopReason === "visible-pages-were-duplicates"
-            ? "LinkedIn repeated the same visible results"
-            : diag.stopReason === "voyager-pages-were-duplicates"
-              ? "LinkedIn repeated the same API results"
-              : diag.stopReason === "voyager-returned-empty-page"
-                ? "LinkedIn returned an empty API page"
-                : diag.stopReason === "voyager-total-reached"
-                  ? "LinkedIn API reached its reported total"
-                  : diag.stopReason === "voyager-endpoints-exhausted"
-                    ? "LinkedIn API endpoints returned no additional unique connections"
-                    : diag.stopReason === "voyager-request-failed"
-                      ? "LinkedIn API request failed"
-                      : diag.stopReason || "importer stopped";
+      : diag.stopReason === "partial-import-kept"
+        ? "kept the successful partial import"
+        : diag.stopReason === "linkedin-showed-no-next-page"
+          ? "LinkedIn showed no next page"
+          : diag.stopReason === "linkedin-page-did-not-advance"
+            ? "LinkedIn kept returning the same page after Next and direct-page fallback"
+            : diag.stopReason === "visible-pages-were-duplicates"
+              ? "LinkedIn repeated the same visible results"
+              : diag.stopReason === "voyager-pages-were-duplicates"
+                ? "LinkedIn repeated the same API results"
+                : diag.stopReason === "voyager-returned-empty-page"
+                  ? "LinkedIn returned an empty API page"
+                  : diag.stopReason === "voyager-total-reached"
+                    ? "LinkedIn API reached its reported total"
+                    : diag.stopReason === "voyager-endpoints-exhausted"
+                      ? "LinkedIn API endpoints returned no additional unique connections"
+                      : diag.stopReason === "voyager-request-failed"
+                        ? "LinkedIn API request failed"
+                        : diag.stopReason === "voyager-search-request-failed"
+                          ? "LinkedIn search API request failed"
+                          : diag.stopReason === "voyager-search-returned-empty-page"
+                            ? "LinkedIn search API returned no parseable profiles"
+                            : diag.stopReason || "importer stopped";
   const stats = [
     diag.source ? `${diag.source} path` : "",
     diag.pagesVisited ? `${diag.pagesVisited} page${diag.pagesVisited === 1 ? "" : "s"}` : "",
@@ -425,7 +431,7 @@ function ConnectionsPage() {
     }
   }
 
-  async function startRealSync(force = false) {
+  async function startRealSync(force = true) {
     if (cookieImportHostedDisabled) {
       setStatusMsg(
         "Cookie import is local-only on the hosted app because Vercel cannot run a persistent Chrome profile. Use Onboarding > Connect LinkedIn for live approved actions.",
@@ -611,7 +617,7 @@ function ConnectionsPage() {
                   </Button>
                 )}
                 <Button
-                  onClick={() => startRealSync(false)}
+                  onClick={() => startRealSync(true)}
                   disabled={syncState === "syncing" || cookieImportHostedDisabled}
                   title={
                     cookieImportHostedDisabled
@@ -860,7 +866,7 @@ function ConnectionsPage() {
           </div>
           <div className="flex gap-2">
             <Button
-              onClick={() => startRealSync(false)}
+              onClick={() => startRealSync(true)}
               disabled={syncState === "syncing" || !session.connected}
               variant="outline"
               size="sm"

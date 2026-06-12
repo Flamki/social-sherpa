@@ -281,6 +281,30 @@ async function reportProgress(onProgress: SyncProgressHandler | undefined, progr
   }
 }
 
+async function gotoLinkedInPage(page: any, url: string): Promise<boolean> {
+  try {
+    await page.goto(url, { waitUntil: "commit", timeout: 20_000 });
+    await sleep(jitter(2500, 4500));
+    return true;
+  } catch {
+    try {
+      const current = page.url();
+      const usable = await page
+        .evaluate(() => {
+          const body = document.body?.innerText || "";
+          return (
+            body.length > 500 ||
+            document.querySelectorAll("a[href*='/in/'], button, main").length > 0
+          );
+        })
+        .catch(() => false);
+      return /linkedin\.com/i.test(current) && usable;
+    } catch {
+      return false;
+    }
+  }
+}
+
 async function fetchConnectionsViaVoyager(
   context: any,
   jsessionid: string,
@@ -356,21 +380,24 @@ async function fetchConnectionsViaVoyager(
         source: "voyager",
       });
       const paging = r.data?.paging || r.data?.data?.paging;
-      const responseElements = r.data?.elements || r.data?.data?.elements;
       const pagingCount = Number(paging?.count);
       const pagingTotal = Number(paging?.total);
       if (Number.isFinite(pagingTotal) && pagingTotal >= 0) reportedTotal = pagingTotal;
       const sourceStep =
+        pageItems.length ||
         (Number.isFinite(pagingCount) && pagingCount > 0 ? pagingCount : 0) ||
-        (Array.isArray(responseElements) && responseElements.length > 0
-          ? responseElements.length
-          : pageSize);
+        pageSize;
       start += Math.max(1, sourceStep);
-      if (reportedTotal !== undefined && start >= reportedTotal) {
+      if (
+        reportedTotal !== undefined &&
+        start >= reportedTotal &&
+        reportedTotal >= limit &&
+        pageItems.length < pageSize
+      ) {
         stopReason = "voyager-total-reached";
         break;
       }
-      await sleep(jitter(500, 1200));
+      await sleep(pagesVisited >= 5 ? jitter(2500, 5000) : jitter(900, 1800));
     }
 
     if (byId.size > 0) {
@@ -431,6 +458,146 @@ async function fetchConnectionsViaVoyager(
       pagesVisited: 0,
       uniqueFound: 0,
       details: failures.join(" | "),
+    },
+  };
+}
+
+async function fetchConnectionsViaSearchVoyager(
+  context: any,
+  jsessionid: string,
+  limit: number,
+  seed: Lead[],
+  onProgress?: SyncProgressHandler,
+) {
+  const { voyagerRequest } = await import("./linkedin.voyager");
+  const filters = encodeURIComponent("List(resultType->PEOPLE,network->F)");
+  const query = encodeURIComponent(
+    "(flagshipSearchIntent:SEARCH_SRP,queryParameters:List((key:resultType,value:List(PEOPLE)),(key:network,value:List(F))),includeFiltersInResponse:false)",
+  );
+  const endpointFor = [
+    (start: number, count: number) =>
+      `https://www.linkedin.com/voyager/api/search/blended?count=${count}&filters=${filters}&origin=MEMBER_PROFILE_CANNED_SEARCH&q=all&start=${start}`,
+    (start: number, count: number) =>
+      `https://www.linkedin.com/voyager/api/search/dash/clusters?count=${count}&origin=MEMBER_PROFILE_CANNED_SEARCH&q=all&query=${query}&start=${start}`,
+  ];
+
+  const byId = new Map<string, Lead>();
+  for (const item of seed) byId.set(item.publicId, item);
+
+  const failures: string[] = [];
+  let pagesVisited = 0;
+  let stopReason = "requested-limit-reached";
+  let lastPageAdded = 0;
+  let lastParsedCount = 0;
+  let lastUrl = "";
+  let bestUnique = byId.size;
+
+  for (const buildUrl of endpointFor) {
+    let stagnantPages = 0;
+    const pageSize = 20;
+    const maxSourceRows = Math.max(limit * 2, limit + 80);
+    for (let start = 0; start < maxSourceRows && byId.size < limit && stagnantPages < 4; ) {
+      const url = buildUrl(start, pageSize);
+      lastUrl = url;
+      const r = await voyagerRequest(context, {
+        url,
+        jsessionid,
+        retries: 1,
+      });
+      pagesVisited++;
+      if (r.reason !== "ok") {
+        stopReason = "voyager-search-request-failed";
+        failures.push(`${r.reason}:${r.status}:${r.message}`);
+        break;
+      }
+
+      const pageItems = parseVoyagerConnections(r.data, pageSize);
+      lastParsedCount = pageItems.length;
+      if (pageItems.length === 0) {
+        stopReason = "voyager-search-returned-empty-page";
+        failures.push(`empty:${voyagerShape(r.data)}`);
+        break;
+      }
+
+      const before = byId.size;
+      for (const item of pageItems) {
+        if (byId.size >= limit) break;
+        byId.set(item.publicId, item);
+      }
+      lastPageAdded = byId.size - before;
+      bestUnique = Math.max(bestUnique, byId.size);
+      stagnantPages = lastPageAdded === 0 ? stagnantPages + 1 : 0;
+      await reportProgress(onProgress, {
+        items: Array.from(byId.values()).slice(0, limit),
+        importedCount: Math.min(byId.size, limit),
+        requestedCount: limit,
+        pagesVisited,
+        source: "voyager",
+      });
+      if (byId.size >= limit) {
+        stopReason = "requested-limit-reached";
+        break;
+      }
+      start += pageItems.length || pageSize;
+      await sleep(pagesVisited >= 8 ? jitter(1600, 3200) : jitter(700, 1400));
+    }
+    if (byId.size >= limit) break;
+  }
+
+  return {
+    success: byId.size > seed.length,
+    items: Array.from(byId.values()).slice(0, limit),
+    diagnostic: {
+      source: "voyager" as const,
+      stopReason: byId.size >= limit ? "requested-limit-reached" : stopReason,
+      pagesVisited,
+      uniqueFound: bestUnique,
+      lastPageAdded,
+      lastParsedCount,
+      lastUrl,
+      details: failures.join(" | "),
+    },
+  };
+}
+
+function partialImportResult({
+  items,
+  cap,
+  warmupDayValue,
+  requestedCount,
+  effectiveLimit,
+  capBypassed,
+  diagnostic,
+  reason,
+}: {
+  items: Lead[];
+  cap: number;
+  warmupDayValue: number;
+  requestedCount: number;
+  effectiveLimit: number;
+  capBypassed: boolean;
+  diagnostic?: ImportDiagnostic;
+  reason: string;
+}): Extract<SyncResult, { success: true }> {
+  return {
+    success: true,
+    count: items.length,
+    items,
+    cappedAt: cap,
+    warmupDay: warmupDayValue,
+    requestedCount,
+    effectiveLimit,
+    capBypassed,
+    diagnostic: {
+      source: diagnostic?.source || "voyager",
+      stopReason: "partial-import-kept",
+      pagesVisited: diagnostic?.pagesVisited || 0,
+      uniqueFound: items.length,
+      lastPageAdded: diagnostic?.lastPageAdded,
+      lastParsedCount: diagnostic?.lastParsedCount,
+      lastAnchorCount: diagnostic?.lastAnchorCount,
+      lastUrl: diagnostic?.lastUrl,
+      details: [reason, diagnostic?.details].filter(Boolean).join("; "),
     },
   };
 }
@@ -523,6 +690,7 @@ export async function runLinkedInSync(
 
   const items: Lead[] = [];
   let apiDiagnostic: ImportDiagnostic | undefined;
+  let searchApiDiagnostic: ImportDiagnostic | undefined;
 
   try {
     // ---- go to the search/connections page (session already validated) ----
@@ -582,24 +750,97 @@ export async function runLinkedInSync(
           diagnostic: api.diagnostic,
         };
       }
+      console.log(
+        `[connections-import] Voyager found ${items.length}/${requestedLimit}; trying search API for remaining connections.`,
+      );
+      const searchApi = await fetchConnectionsViaSearchVoyager(
+        context,
+        await currentJsession(context, JSESSIONID),
+        requestedLimit,
+        items,
+        onProgress,
+      );
+      searchApiDiagnostic = searchApi.diagnostic;
+      if (searchApi.items.length > items.length) {
+        items.length = 0;
+        items.push(...searchApi.items);
+        apiDiagnostic = searchApi.diagnostic;
+        console.log(
+          `[connections-import] Search Voyager expanded import to ${items.length}/${requestedLimit}.`,
+        );
+        if (items.length >= requestedLimit) {
+          await opened.persistCookies().catch(() => {});
+          await context.close();
+          return {
+            success: true,
+            count: items.length,
+            items,
+            cappedAt: cap,
+            warmupDay: warmupDay(acct),
+            requestedCount: data.limit,
+            effectiveLimit: requestedLimit,
+            capBypassed,
+            diagnostic: searchApi.diagnostic,
+          };
+        }
+      }
     } else {
       apiDiagnostic = api.diagnostic;
     }
 
-    try {
-      await page.goto(targetUrl, { waitUntil: "domcontentloaded", timeout: 45_000 });
-    } catch (e) {
-      const msg = (e as Error).message;
-      if (!msg.includes("ERR_TOO_MANY_REDIRECTS")) throw e;
+    if (items.length > 0) {
+      await reportProgress(onProgress, {
+        items: items.slice(0, requestedLimit),
+        importedCount: Math.min(items.length, requestedLimit),
+        requestedCount: requestedLimit,
+        pagesVisited: apiDiagnostic?.pagesVisited || 0,
+        source: "voyager",
+      });
+    }
+
+    let visibleStartUrl = targetUrl;
+    if (items.length > 0) {
+      try {
+        const u = new URL(visibleStartUrl);
+        if (u.pathname.includes("/search/")) {
+          const nextLikelyPage = Math.max(
+            Number(u.searchParams.get("page") || 1),
+            Math.floor(items.length / 20) + 1,
+          );
+          u.searchParams.set("page", String(nextLikelyPage));
+          visibleStartUrl = u.toString();
+          console.log(
+            `[connections-import] Visible fallback starting at search page ${nextLikelyPage} after ${items.length} API imports.`,
+          );
+        }
+      } catch {
+        /* keep original visible URL */
+      }
+    }
+
+    const initialPageLoaded = await gotoLinkedInPage(page, visibleStartUrl);
+    if (!initialPageLoaded) {
       await opened.persistCookies().catch(() => {});
       await context.close();
+      if (items.length > 0) {
+        return partialImportResult({
+          items,
+          cap,
+          warmupDayValue: warmupDay(acct),
+          requestedCount: data.limit,
+          effectiveLimit: requestedLimit,
+          capBypassed,
+          diagnostic: apiDiagnostic,
+          reason:
+            "Voyager import succeeded partially, but the search/visible fallback could not add more. Kept the successful API results instead of failing the run.",
+        });
+      }
       return {
         success: false,
         error:
-          "LinkedIn redirected the search page too many times. The pasted cookies are probably stale, or LinkedIn wants a fresh browser session.",
+          "LinkedIn search page could not load. The pasted cookies are probably stale, or LinkedIn wants a fresh browser session.",
       };
     }
-    await sleep(jitter(2500, 5000));
     const totalAvailable = await page
       .evaluate(() => {
         const body = document.body?.innerText || "";
@@ -821,11 +1062,8 @@ export async function runLinkedInSync(
           const nextUrl = new URL(beforeUrl);
           nextUrl.searchParams.set("page", String(currentPageNumber + 1));
           await sleep(jitter(1800, 3200));
-          await page.goto(nextUrl.toString(), {
-            waitUntil: "domcontentloaded",
-            timeout: 45_000,
-          });
-          await sleep(jitter(1800, 3200));
+          const loaded = await gotoLinkedInPage(page, nextUrl.toString());
+          if (!loaded) throw new Error("LinkedIn page did not load");
           const fallbackSignature = await page
             .evaluate(() => {
               const ids = new Set<string>();
@@ -862,6 +1100,39 @@ export async function runLinkedInSync(
           "Diagnostic: " +
           diag,
       };
+    }
+    if (items.length < requestedLimit && apiDiagnostic?.source === "voyager") {
+      return partialImportResult({
+        items,
+        cap,
+        warmupDayValue: warmupDay(acct),
+        requestedCount: data.limit,
+        effectiveLimit: requestedLimit,
+        capBypassed,
+        diagnostic: {
+          source: "visible",
+          stopReason,
+          pagesVisited,
+          uniqueFound: items.length,
+          lastPageAdded,
+          lastParsedCount,
+          lastAnchorCount,
+          lastUrl: finalUrl,
+          details: [
+            `API seed ${apiDiagnostic.uniqueFound}`,
+            searchApiDiagnostic
+              ? `search API ${searchApiDiagnostic.stopReason}, unique ${searchApiDiagnostic.uniqueFound}${
+                  searchApiDiagnostic.details ? ` (${searchApiDiagnostic.details})` : ""
+                }`
+              : "",
+            `visible ${diag}`,
+          ]
+            .filter(Boolean)
+            .join("; "),
+        },
+        reason:
+          "LinkedIn stopped returning additional unique visible results after the API import.",
+      });
     }
     return {
       success: true,
