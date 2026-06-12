@@ -45,6 +45,18 @@ export type Lead = {
   profileUrl: string;
   publicId: string;
   tags: string[];
+  /** Profile photo URL, built from LinkedIn's VectorImage packet. Free — already in the data. */
+  picture?: string;
+  /** Banner/cover image URL behind the profile. Free — already in the data. */
+  backgroundImage?: string;
+  /** Epoch ms of when you connected (when LinkedIn includes it on the record). */
+  connectedAt?: number;
+  /** LinkedIn flag for a deceased member's account. */
+  memorialized?: boolean;
+  /** LinkedIn internal IDs — only useful for making further LinkedIn calls, not for display. */
+  entityUrn?: string;
+  objectUrn?: string;
+  trackingId?: string;
 };
 
 export type ImportDiagnostic = {
@@ -112,6 +124,34 @@ function publicIdFromUrl(value: unknown): string {
   }
 }
 
+// Pull a clean company name out of a headline like "Senior Engineer at NVIDIA | PMP | AWS"
+// or "Co-Founder & CEO at NodeOps. Building CreateOS...". We take the text after the FIRST
+// " at " and cut at the first separator (pipe, dot/bullet, dash, sentence break, paren) so
+// the company cell holds just "NVIDIA" / "NodeOps", not the rest of the tagline.
+function companyFromHeadline(headline: string): string {
+  if (!headline) return "";
+  const m = headline.match(/\s+at\s+(.+)/i);
+  if (!m) return "";
+  const tail = m[1].split(/\s*[|·•\n]\s*|\s[—–-]\s|\.\s|\s*\(/)[0] || "";
+  return tail.replace(/[\s,;.|·•—–-]+$/, "").trim();
+}
+
+// LinkedIn ships images as a "VectorImage": a rootUrl plus size variants (artifacts).
+// The usable URL is rootUrl + a variant's path segment. We prefer ~200px, falling back to
+// the next-best available size. Returns "" when no image is present.
+function vectorImageUrl(img: any): string {
+  const v = img?.["com.linkedin.common.VectorImage"] || img;
+  const root = text(v?.rootUrl);
+  const artifacts = Array.isArray(v?.artifacts) ? v.artifacts : [];
+  if (!root || artifacts.length === 0) return "";
+  const pick =
+    artifacts.find((a: any) => a?.width === 200) ||
+    artifacts.find((a: any) => a?.width === 100) ||
+    artifacts[artifacts.length - 1];
+  const segment = text(pick?.fileIdentifyingUrlPathSegment);
+  return segment ? root + segment : "";
+}
+
 function profileToLead(p: any): Lead | null {
   const publicId =
     text(p?.publicIdentifier) ||
@@ -137,18 +177,33 @@ function profileToLead(p: any): Lead | null {
   const location =
     text(profile?.geoLocationName) ||
     text(profile?.locationName) ||
+    text(profile?.geoLocation?.defaultLocalizedName) ||
+    text(profile?.location?.basicLocation?.city) ||
     text(profile?.location) ||
     text(p?.location);
+
+  const picture = vectorImageUrl(profile?.picture) || vectorImageUrl(p?.picture);
+  const backgroundImage =
+    vectorImageUrl(profile?.backgroundImage) || vectorImageUrl(p?.backgroundImage);
+  const rawConnectedAt = Number(p?.createdAt ?? profile?.createdAt);
+  const connectedAt = Number.isFinite(rawConnectedAt) ? rawConnectedAt : undefined;
 
   return {
     id: publicId,
     publicId,
     name,
     headline,
-    company: headline.includes(" at ") ? headline.split(" at ").pop()!.trim() : "",
+    company: companyFromHeadline(headline),
     location,
     profileUrl: `https://www.linkedin.com/in/${publicId}`,
     tags: [],
+    picture,
+    backgroundImage,
+    connectedAt,
+    memorialized: Boolean(profile?.memorialized),
+    entityUrn: text(profile?.entityUrn) || text(p?.entityUrn),
+    objectUrn: text(profile?.objectUrn) || text(p?.objectUrn),
+    trackingId: text(profile?.trackingId) || text(p?.trackingId),
   };
 }
 
@@ -588,6 +643,14 @@ export async function runLinkedInSync(
         const NOISE =
           /^(message|connect|follow|pending|view profile|view |• |· |\d+ (mutual|connection)|status is|premium|open the|more|save|·)/i;
         const clean = (s: string) => s.replace(/\s+/g, " ").trim();
+        // Same company extraction as the Voyager path: text after the first " at ",
+        // cut at the first separator so we keep just the company name.
+        const companyFrom = (h: string) => {
+          const m = h.match(/\s+at\s+(.+)/i);
+          if (!m) return "";
+          const tail = m[1].split(/\s*[|·•\n]\s*|\s[—–-]\s|\.\s|\s*\(/)[0] || "";
+          return tail.replace(/[\s,;.|·•—–-]+$/, "").trim();
+        };
 
         for (const a of anchors) {
           const href = a.href.split("?")[0];
@@ -634,14 +697,20 @@ export async function runLinkedInSync(
             lines[1] ||
             "";
 
+          // Profile photo: the avatar img in this result row, skipping logos/banners.
+          const avatar = scope.querySelector<HTMLImageElement>("img[alt]");
+          const picture =
+            avatar?.src && !/logo|background/i.test(avatar.alt || "") ? avatar.src : "";
+
           if (!byId.has(publicId)) {
             byId.set(publicId, {
               publicId,
               name,
               headline,
               location,
-              company: headline.includes(" at ") ? headline.split(" at ").pop()!.trim() : "",
+              company: companyFrom(headline),
               profileUrl: href,
+              picture,
             });
           }
         }

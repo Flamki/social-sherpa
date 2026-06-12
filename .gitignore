@@ -29,6 +29,9 @@ dist-ssr
 .wrangler/
 .dev.vars
 
+# Local Claude Code tool-permission config (machine-local, not project state)
+.claude/
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json

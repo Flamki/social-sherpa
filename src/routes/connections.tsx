@@ -898,7 +898,26 @@ function ConnectionsPage() {
                   <tr key={c.id} className="hover:bg-muted/30 transition-colors">
                     <td className="p-3 font-medium">
                       <div className="flex items-center gap-3">
-                        <div className="h-8 w-8 rounded-full bg-primary/10 flex items-center justify-center text-[11px] font-bold text-primary shrink-0">
+                        {c.picture ? (
+                          <img
+                            src={c.picture}
+                            alt={c.name || ""}
+                            loading="lazy"
+                            referrerPolicy="no-referrer"
+                            className="h-8 w-8 rounded-full object-cover shrink-0 bg-primary/10"
+                            onError={(e) => {
+                              // If LinkedIn's signed image URL has expired, fall back to the initial.
+                              const el = e.currentTarget;
+                              el.style.display = "none";
+                              el.nextElementSibling?.classList.remove("hidden");
+                            }}
+                          />
+                        ) : null}
+                        <div
+                          className={`h-8 w-8 rounded-full bg-primary/10 flex items-center justify-center text-[11px] font-bold text-primary shrink-0${
+                            c.picture ? " hidden" : ""
+                          }`}
+                        >
                           {c.name?.charAt(0) || "?"}
                         </div>
                         {c.profileUrl ? (
