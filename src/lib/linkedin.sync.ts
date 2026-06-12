@@ -59,6 +59,16 @@ export type ImportDiagnostic = {
   details?: string;
 };
 
+export type SyncProgress = {
+  items: Lead[];
+  importedCount: number;
+  requestedCount: number;
+  pagesVisited: number;
+  source: "voyager" | "visible";
+};
+
+type SyncProgressHandler = (progress: SyncProgress) => void | Promise<void>;
+
 export type SyncResult =
   | {
       success: true;
@@ -207,7 +217,21 @@ async function currentJsession(context: any, fallback: string): Promise<string> 
   }
 }
 
-async function fetchConnectionsViaVoyager(context: any, jsessionid: string, limit: number) {
+async function reportProgress(onProgress: SyncProgressHandler | undefined, progress: SyncProgress) {
+  if (!onProgress) return;
+  try {
+    await onProgress(progress);
+  } catch (error) {
+    console.warn("[connections-import] Progress reporting failed:", (error as Error).message);
+  }
+}
+
+async function fetchConnectionsViaVoyager(
+  context: any,
+  jsessionid: string,
+  limit: number,
+  onProgress?: SyncProgressHandler,
+) {
   const { voyagerRequest } = await import("./linkedin.voyager");
   const endpointFor = [
     (start: number, count: number) =>
@@ -263,9 +287,19 @@ async function fetchConnectionsViaVoyager(context: any, jsessionid: string, limi
         break;
       }
       const before = byId.size;
-      for (const item of pageItems) byId.set(item.publicId, item);
+      for (const item of pageItems) {
+        byId.set(item.publicId, item);
+        allById.set(item.publicId, item);
+      }
       lastPageAdded = byId.size - before;
       stagnantPages = byId.size === before ? stagnantPages + 1 : 0;
+      await reportProgress(onProgress, {
+        items: Array.from(allById.values()).slice(0, limit),
+        importedCount: Math.min(allById.size, limit),
+        requestedCount: limit,
+        pagesVisited,
+        source: "voyager",
+      });
       const paging = r.data?.paging || r.data?.data?.paging;
       const responseElements = r.data?.elements || r.data?.data?.elements;
       const pagingCount = Number(paging?.count);
@@ -287,7 +321,6 @@ async function fetchConnectionsViaVoyager(context: any, jsessionid: string, limi
     if (byId.size > 0) {
       if (stagnantPages >= 2) stopReason = "voyager-pages-were-duplicates";
       if (byId.size >= limit) stopReason = "requested-limit-reached";
-      for (const item of byId.values()) allById.set(item.publicId, item);
       const diagnostic: ImportDiagnostic = {
         source: "voyager",
         stopReason,
@@ -378,7 +411,10 @@ function validateFirstDegreeSearchUrl(raw?: string) {
 
 export type SyncInput = z.infer<typeof SyncInputSchema>;
 
-export async function runLinkedInSync(data: SyncInput): Promise<SyncResult> {
+export async function runLinkedInSync(
+  data: SyncInput,
+  onProgress?: SyncProgressHandler,
+): Promise<SyncResult> {
   // ---- lazy server-only imports ----
   const { openLinkedIn } = await import("./linkedin.browser");
   const { getOrCreateSession, startWarmup, dailyImportCap, withinActiveHours, warmupDay } =
@@ -471,6 +507,7 @@ export async function runLinkedInSync(data: SyncInput): Promise<SyncResult> {
       context,
       await currentJsession(context, JSESSIONID),
       requestedLimit,
+      onProgress,
     );
     if (api.success) {
       apiDiagnostic = api.diagnostic;
@@ -632,6 +669,13 @@ export async function runLinkedInSync(data: SyncInput): Promise<SyncResult> {
 
       lastPageAdded = added;
       stagnantPages = added === 0 ? stagnantPages + 1 : 0;
+      await reportProgress(onProgress, {
+        items: items.slice(0, limit),
+        importedCount: Math.min(items.length, limit),
+        requestedCount: limit,
+        pagesVisited,
+        source: "visible",
+      });
       if (items.length >= limit) {
         stopReason = "requested-limit-reached";
         break;

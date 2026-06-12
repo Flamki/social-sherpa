@@ -1,5 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   Search,
   RefreshCw,
@@ -24,7 +24,7 @@ import { store, useStore } from "@/lib/store";
 import { getConnectionImportJob, startConnectionImportJob } from "@/lib/import.jobs";
 import { saveProxyConfig, getSessionInfo } from "@/lib/linkedin.config";
 import { testProxy } from "@/lib/linkedin.proxy.fn";
-import type { ImportDiagnostic } from "@/lib/linkedin.sync";
+import type { ImportDiagnostic, Lead } from "@/lib/linkedin.sync";
 
 export const Route = createFileRoute("/connections")({
   head: () => ({
@@ -37,6 +37,16 @@ export const Route = createFileRoute("/connections")({
 });
 
 type SyncState = "idle" | "syncing" | "done";
+
+type LiveImportState = {
+  jobId: string;
+  requestedCount: number;
+  items: Lead[];
+  latest?: Lead;
+  pagesVisited: number;
+  source?: "voyager" | "visible";
+  complete: boolean;
+};
 
 const FIRST_DEGREE_SEARCH_URL =
   "https://www.linkedin.com/search/results/people/?origin=MEMBER_PROFILE_CANNED_SEARCH&network=%5B%22F%22%5D";
@@ -103,6 +113,13 @@ function ConnectionsPage() {
   const [search, setSearch] = useState("");
   const [syncState, setSyncState] = useState<SyncState>("idle");
   const [statusMsg, setStatusMsg] = useState<string>("");
+  const [liveImport, setLiveImport] = useState<LiveImportState | null>(null);
+  const liveJobIdRef = useRef("");
+  const revealQueueRef = useRef<Lead[]>([]);
+  const queuedIdsRef = useRef(new Set<string>());
+  const revealTimerRef = useRef<number | null>(null);
+  const pendingCompletionRef = useRef<null | (() => void)>(null);
+  const pendingCompletionJobIdRef = useRef("");
 
   const [liAt, setLiAt] = useState("");
   const [jSessionId, setJSessionId] = useState("");
@@ -126,58 +143,144 @@ function ConnectionsPage() {
     return session.cookies || { li_at: liAt, JSESSIONID: jSessionId };
   }
 
+  function finishRevealQueue() {
+    if (revealTimerRef.current !== null) {
+      window.clearInterval(revealTimerRef.current);
+      revealTimerRef.current = null;
+    }
+    const complete = pendingCompletionRef.current;
+    pendingCompletionRef.current = null;
+    pendingCompletionJobIdRef.current = "";
+    if (complete) complete();
+  }
+
+  function beginLiveImport(jobId: string, requestedCount: number) {
+    if (liveJobIdRef.current === jobId) return;
+    if (revealTimerRef.current !== null) window.clearInterval(revealTimerRef.current);
+    liveJobIdRef.current = jobId;
+    revealQueueRef.current = [];
+    queuedIdsRef.current = new Set();
+    pendingCompletionRef.current = null;
+    pendingCompletionJobIdRef.current = "";
+    revealTimerRef.current = null;
+    setLiveImport({
+      jobId,
+      requestedCount,
+      items: [],
+      pagesVisited: 0,
+      complete: false,
+    });
+  }
+
+  function enqueueLiveItems(job: any) {
+    beginLiveImport(job.id, job.requestedCount || importLimit);
+    const incoming = (job.items || []) as Lead[];
+    for (const item of incoming) {
+      const key = item.publicId || item.profileUrl || item.id;
+      if (!key || queuedIdsRef.current.has(key)) continue;
+      queuedIdsRef.current.add(key);
+      revealQueueRef.current.push(item);
+    }
+
+    setLiveImport((current) =>
+      current
+        ? {
+            ...current,
+            requestedCount: job.requestedCount || current.requestedCount,
+            pagesVisited: job.pagesVisited || current.pagesVisited,
+            source: job.source || current.source,
+          }
+        : current,
+    );
+
+    if (revealTimerRef.current !== null || revealQueueRef.current.length === 0) return;
+    revealTimerRef.current = window.setInterval(() => {
+      const next = revealQueueRef.current.shift();
+      if (!next) {
+        finishRevealQueue();
+        return;
+      }
+      setLiveImport((current) =>
+        current
+          ? {
+              ...current,
+              items: [...current.items, next],
+              latest: next,
+            }
+          : current,
+      );
+      if (revealQueueRef.current.length === 0 && pendingCompletionRef.current) {
+        finishRevealQueue();
+      }
+    }, 90);
+  }
+
+  function completeImportJob(job: any, cookiesToUse: ReturnType<typeof currentCookies>) {
+    const res = job.result;
+    store.set((s) => ({
+      ...s,
+      session: { ...s.session, connected: true, cookies: cookiesToUse },
+      connections: {
+        source: "linkedin",
+        uploadedAt: new Date().toISOString(),
+        items: res.items as any,
+      },
+      ops: {
+        ...s.ops,
+        import: {
+          status: "done",
+          jobId: job.id,
+          startedAt: job.startedAt,
+          finishedAt: job.finishedAt || new Date().toISOString(),
+          requestedCount: job.requestedCount,
+          importedCount: res.count,
+          totalAvailable: res.totalAvailable,
+          message: `Imported ${res.count} connections.`,
+        },
+      },
+    }));
+    setLiveImport((current) => (current ? { ...current, complete: true } : current));
+    setSyncState("done");
+    setShowLogin(false);
+    const totalText = res.totalAvailable ? ` of about ${res.totalAvailable}` : "";
+    const requestedText =
+      res.requestedCount && res.requestedCount !== res.count
+        ? ` / ${res.requestedCount} requested`
+        : "";
+    const capText =
+      res.capBypassed && res.cappedAt
+        ? ` Warmup recommendation was ${res.cappedAt}/run; manual import override used.`
+        : res.effectiveLimit && res.effectiveLimit !== res.requestedCount
+          ? ` Warmup cap limited this run to ${res.effectiveLimit}.`
+          : "";
+    const diagnosticText = res.diagnostic
+      ? ` Reason: ${formatImportDiagnostic(res.diagnostic)}.`
+      : "";
+    setStatusMsg(
+      `✓ Imported ${res.count}${requestedText}${totalText} leads. Background job complete.${capText}${diagnosticText}`,
+    );
+  }
+
   async function applyImportJob(job: any, cookiesToUse = currentCookies()) {
     if (job.status === "running") {
+      enqueueLiveItems(job);
       setSyncState("syncing");
       setStatusMsg(
-        `Import running in background (${job.requestedCount || importOp.requestedCount || importLimit} requested). You can switch tabs.`,
+        `Importing ${job.importedCount || 0} of ${job.requestedCount || importOp.requestedCount || importLimit} connections in the background.`,
       );
       return;
     }
 
     if (job.status === "done" && job.result?.success) {
-      const res = job.result;
-      store.set((s) => ({
-        ...s,
-        session: { ...s.session, connected: true, cookies: cookiesToUse },
-        connections: {
-          source: "linkedin",
-          uploadedAt: new Date().toISOString(),
-          items: res.items as any,
-        },
-        ops: {
-          ...s.ops,
-          import: {
-            status: "done",
-            jobId: job.id,
-            startedAt: job.startedAt,
-            finishedAt: job.finishedAt || new Date().toISOString(),
-            requestedCount: job.requestedCount,
-            importedCount: res.count,
-            totalAvailable: res.totalAvailable,
-            message: `Imported ${res.count} connections.`,
-          },
-        },
-      }));
-      setSyncState("done");
-      setShowLogin(false);
-      const totalText = res.totalAvailable ? ` of about ${res.totalAvailable}` : "";
-      const requestedText =
-        res.requestedCount && res.requestedCount !== res.count
-          ? ` / ${res.requestedCount} requested`
-          : "";
-      const capText =
-        res.capBypassed && res.cappedAt
-          ? ` Warmup recommendation was ${res.cappedAt}/run; manual import override used.`
-          : res.effectiveLimit && res.effectiveLimit !== res.requestedCount
-            ? ` Warmup cap limited this run to ${res.effectiveLimit}.`
-            : "";
-      const diagnosticText = res.diagnostic
-        ? ` Reason: ${formatImportDiagnostic(res.diagnostic)}.`
-        : "";
-      setStatusMsg(
-        `✓ Imported ${res.count}${requestedText}${totalText} leads. Background job complete.${capText}${diagnosticText}`,
-      );
+      enqueueLiveItems(job);
+      if (pendingCompletionJobIdRef.current === job.id) return;
+      if (revealQueueRef.current.length > 0) {
+        pendingCompletionJobIdRef.current = job.id;
+        pendingCompletionRef.current = () => completeImportJob(job, cookiesToUse);
+        setStatusMsg("LinkedIn fetch complete. Finishing the live connection list...");
+      } else {
+        completeImportJob(job, cookiesToUse);
+      }
       return;
     }
 
@@ -229,10 +332,17 @@ function ConnectionsPage() {
   useEffect(() => {
     if (importOp.status !== "running" || !importOp.jobId) return;
     void pollImportJob(importOp.jobId);
-    const id = window.setInterval(() => void pollImportJob(importOp.jobId!), 2_500);
+    const id = window.setInterval(() => void pollImportJob(importOp.jobId!), 750);
     return () => window.clearInterval(id);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [importOp.status, importOp.jobId]);
+
+  useEffect(
+    () => () => {
+      if (revealTimerRef.current !== null) window.clearInterval(revealTimerRef.current);
+    },
+    [],
+  );
 
   async function loadInfo() {
     const c = currentCookies();
@@ -330,6 +440,7 @@ function ConnectionsPage() {
     }
 
     const requestedCount = Math.max(1, Math.min(1000, Math.floor(importLimit || 25)));
+    beginLiveImport(`starting_${Date.now()}`, requestedCount);
     setSyncState("syncing");
     setStatusMsg("Starting background import...");
 
@@ -347,6 +458,7 @@ function ConnectionsPage() {
 
       if (!res.success) throw new Error(res.error || "Could not start import job.");
 
+      beginLiveImport(res.job.id, requestedCount);
       store.set((s) => ({
         ...s,
         session: { ...s.session, connected: true, cookies: cookiesToUse },
@@ -388,8 +500,12 @@ function ConnectionsPage() {
       }));
     }
   }
+  const visibleConnections = useMemo(
+    () => (syncState === "syncing" && liveImport ? liveImport.items : conns.items || []),
+    [conns.items, liveImport, syncState],
+  );
   const filtered = useMemo(() => {
-    return (conns.items || []).filter((c) => {
+    return visibleConnections.filter((c) => {
       if (!search) return true;
       const q = search.toLowerCase();
       return (
@@ -399,7 +515,7 @@ function ConnectionsPage() {
         (c.tags || []).some((t) => t.includes(q))
       );
     });
-  }, [conns.items, search]);
+  }, [visibleConnections, search]);
 
   return (
     <AppShell title="Connections">
@@ -687,13 +803,56 @@ function ConnectionsPage() {
           </div>
         )}
 
+        {liveImport && (syncState === "syncing" || liveImport.complete) && (
+          <div className="mb-5 border-y border-muted bg-muted/20 px-4 py-3">
+            <div className="flex items-center justify-between gap-4">
+              <div className="min-w-0">
+                <div className="flex items-center gap-2 text-sm font-medium text-foreground">
+                  {liveImport.complete ? (
+                    <ShieldCheck className="h-4 w-4 text-emerald-500" />
+                  ) : (
+                    <Loader2 className="h-4 w-4 animate-spin text-primary" />
+                  )}
+                  <span>{liveImport.complete ? "Import complete" : "Importing connections"}</span>
+                </div>
+                <p className="mt-1 truncate text-xs text-muted-foreground">
+                  {liveImport.latest
+                    ? `Added ${liveImport.latest.name}`
+                    : "Opening LinkedIn and preparing the first page..."}
+                </p>
+              </div>
+              <div className="shrink-0 text-right">
+                <div className="text-sm font-semibold tabular-nums text-foreground">
+                  {liveImport.items.length} / {liveImport.requestedCount}
+                </div>
+                <div className="text-[10px] text-muted-foreground">
+                  {liveImport.source
+                    ? `${liveImport.source} · ${liveImport.pagesVisited} page${liveImport.pagesVisited === 1 ? "" : "s"}`
+                    : "starting"}
+                </div>
+              </div>
+            </div>
+            <div className="mt-3 h-1.5 overflow-hidden bg-muted">
+              <div
+                className="h-full bg-primary transition-[width] duration-200 ease-out"
+                style={{
+                  width: `${Math.min(
+                    100,
+                    (liveImport.items.length / Math.max(1, liveImport.requestedCount)) * 100,
+                  )}%`,
+                }}
+              />
+            </div>
+          </div>
+        )}
+
         <div className="mb-5 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <div>
             <h1 className="text-xl font-semibold flex items-center gap-2 text-foreground">
               <Users className="h-5 w-5 text-primary" /> Your connections
             </h1>
             <p className="text-sm text-muted-foreground mt-0.5">
-              {(conns.items || []).length} leads imported
+              {visibleConnections.length} leads imported
               {info
                 ? ` · warmup day ${info.warmupDay}/14 · suggested cap ${info.dailyImportCap}/run`
                 : ""}

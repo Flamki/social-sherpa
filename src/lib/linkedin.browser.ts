@@ -9,6 +9,13 @@ import type { AccountSession } from "./linkedin.session";
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 export const jitter = (min: number, max: number) => min + Math.random() * (max - min);
 
+function cleanBrowserError(value: unknown) {
+  return String(value || "Unknown browser error")
+    .replace(/\u001b\[[0-9;]*m/g, "")
+    .split(/\nCall log:/i)[0]
+    .trim();
+}
+
 export type OpenResult =
   | {
       ok: true;
@@ -146,7 +153,7 @@ export async function openLinkedIn(opts: {
   try {
     context = await launchContext();
   } catch (e: any) {
-    const msg = e?.message || String(e);
+    const msg = cleanBrowserError(e?.message || e);
     return {
       ok: false,
       error:
@@ -171,14 +178,40 @@ export async function openLinkedIn(opts: {
   let rotatedProxyAfterTunnelFail = false;
   let recoveredAfterTunnelFail = false;
 
+  async function recoverTimedOutNavigation(errorMessage: string) {
+    if (!/Timeout \d+ms exceeded/i.test(errorMessage)) return false;
+    await sleep(1500);
+    const currentUrl = page.url();
+    if (
+      !/^https:\/\/([a-z0-9-]+\.)?linkedin\.com\//i.test(currentUrl) ||
+      /\/(login|uas\/login|authwall|signup|checkpoint)\b/i.test(currentUrl)
+    ) {
+      return false;
+    }
+    return page
+      .evaluate(() => {
+        const bodyStarted = Boolean(document.body && document.body.childElementCount > 0);
+        const authenticatedShell = Boolean(
+          document.querySelector("#global-nav") ||
+          document.querySelector(".global-nav__me") ||
+          document.querySelector("img.global-nav__me-photo") ||
+          document.querySelector("[data-control-name='nav.settings']") ||
+          document.querySelector("main.scaffold-layout__main"),
+        );
+        return bodyStarted || authenticatedShell;
+      })
+      .catch(() => false);
+  }
+
   try {
     resp = await page.goto("https://www.linkedin.com/feed/", {
       waitUntil: "domcontentloaded",
       timeout: 45_000,
     });
   } catch (e: any) {
-    const msg = e?.message || String(e);
+    const msg = cleanBrowserError(e?.message || e);
     redirectLooped = msg.includes("ERR_TOO_MANY_REDIRECTS");
+    const recoveredAfterNavigationTimeout = await recoverTimedOutNavigation(msg);
 
     const isProxyTunnelFail =
       msg.includes("ERR_TUNNEL_CONNECTION_FAILED") ||
@@ -218,7 +251,7 @@ export async function openLinkedIn(opts: {
               ok: false,
               error:
                 "Proxy tunnel to LinkedIn failed even after rotating the IPRoyal sticky session. " +
-                (retryError?.message || String(retryError)).slice(0, 120),
+                cleanBrowserError(retryError?.message || retryError).slice(0, 120),
             };
           }
         }
@@ -236,9 +269,14 @@ export async function openLinkedIn(opts: {
       }
     }
 
-    if (!redirectLooped && !recoveredAfterTunnelFail) {
+    if (!redirectLooped && !recoveredAfterTunnelFail && !recoveredAfterNavigationTimeout) {
       await context.close().catch(() => {});
       return { ok: false, error: "Could not reach LinkedIn: " + msg };
+    }
+    if (recoveredAfterNavigationTimeout) {
+      console.warn(
+        `[linkedin-browser] Feed navigation exceeded 45s but loaded a usable page at ${page.url()}`,
+      );
     }
   }
 
@@ -261,15 +299,22 @@ export async function openLinkedIn(opts: {
         timeout: 45_000,
       });
     } catch (e) {
-      await context.close().catch(() => {});
-      return {
-        ok: false,
-        error:
-          "Still looping after a clean profile retry — cookies may be stale/invalid. " +
-          "Grab a FRESH li_at + JSESSIONID from a logged-in linkedin.com tab and connect again. (" +
-          (e as Error).message.slice(0, 60) +
-          ")",
-      };
+      const retryMessage = cleanBrowserError((e as Error).message);
+      if (await recoverTimedOutNavigation(retryMessage)) {
+        console.warn(
+          `[linkedin-browser] Clean-profile feed navigation exceeded 45s but loaded a usable page at ${page.url()}`,
+        );
+      } else {
+        await context.close().catch(() => {});
+        return {
+          ok: false,
+          error:
+            "Still looping after a clean profile retry — cookies may be stale/invalid. " +
+            "Grab a FRESH li_at + JSESSIONID from a logged-in linkedin.com tab and connect again. (" +
+            retryMessage.slice(0, 60) +
+            ")",
+        };
+      }
     }
   }
 

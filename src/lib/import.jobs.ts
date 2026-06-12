@@ -2,7 +2,13 @@ import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
 
 import { isVercelRuntime } from "./config.server";
-import { runLinkedInSync, type Lead, type SyncInput, type SyncResult } from "./linkedin.sync";
+import {
+  runLinkedInSync,
+  type Lead,
+  type SyncInput,
+  type SyncProgress,
+  type SyncResult,
+} from "./linkedin.sync";
 
 type ImportJobStatus = "running" | "done" | "failed";
 
@@ -12,6 +18,10 @@ export type ImportJob = {
   startedAt: string;
   finishedAt?: string;
   requestedCount: number;
+  importedCount: number;
+  pagesVisited: number;
+  source?: SyncProgress["source"];
+  updatedAt?: string;
   result?: SyncResult;
   items?: Lead[];
   error?: string;
@@ -58,7 +68,15 @@ function pruneJobs() {
 function startBackgroundImport(jobId: string, input: SyncInput) {
   setTimeout(async () => {
     try {
-      const result = await runLinkedInSync(input);
+      const result = await runLinkedInSync(input, (progress) => {
+        const job = jobs().get(jobId);
+        if (!job || job.status !== "running") return;
+        job.items = progress.items;
+        job.importedCount = progress.importedCount;
+        job.pagesVisited = progress.pagesVisited;
+        job.source = progress.source;
+        job.updatedAt = new Date().toISOString();
+      });
       const job = jobs().get(jobId);
       if (!job) return;
       job.result = result;
@@ -103,6 +121,8 @@ export const startConnectionImportJob = createServerFn({ method: "POST" })
       status: "running",
       startedAt: new Date().toISOString(),
       requestedCount: data.limit,
+      importedCount: 0,
+      pagesVisited: 0,
     };
     jobs().set(id, job);
     startBackgroundImport(id, data);
