@@ -26,6 +26,7 @@ const JobInputSchema = z.object({
   limit: z.number().int().positive().max(1000).default(50),
   headless: z.boolean().default(true),
   force: z.boolean().default(false),
+  bypassWarmupImportCap: z.boolean().default(false),
 });
 
 const JobStatusInputSchema = z.object({

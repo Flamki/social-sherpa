@@ -24,6 +24,7 @@ import { store, useStore } from "@/lib/store";
 import { getConnectionImportJob, startConnectionImportJob } from "@/lib/import.jobs";
 import { saveProxyConfig, getSessionInfo } from "@/lib/linkedin.config";
 import { testProxy } from "@/lib/linkedin.proxy.fn";
+import type { ImportDiagnostic } from "@/lib/linkedin.sync";
 
 export const Route = createFileRoute("/connections")({
   head: () => ({
@@ -54,6 +55,38 @@ type SessionInfo = {
   dailyImportCap: number;
   withinActiveHours: boolean;
 };
+
+function formatImportDiagnostic(diag: ImportDiagnostic) {
+  if (!diag) return "";
+  const base =
+    diag.stopReason === "requested-limit-reached"
+      ? "requested import count reached"
+      : diag.stopReason === "linkedin-showed-no-next-page"
+        ? "LinkedIn showed no next page"
+        : diag.stopReason === "linkedin-page-did-not-advance"
+          ? "LinkedIn kept returning the same page after Next and direct-page fallback"
+          : diag.stopReason === "visible-pages-were-duplicates"
+            ? "LinkedIn repeated the same visible results"
+            : diag.stopReason === "voyager-pages-were-duplicates"
+              ? "LinkedIn repeated the same API results"
+              : diag.stopReason === "voyager-returned-empty-page"
+                ? "LinkedIn returned an empty API page"
+                : diag.stopReason === "voyager-total-reached"
+                  ? "LinkedIn API reached its reported total"
+                  : diag.stopReason === "voyager-endpoints-exhausted"
+                    ? "LinkedIn API endpoints returned no additional unique connections"
+                    : diag.stopReason === "voyager-request-failed"
+                      ? "LinkedIn API request failed"
+                      : diag.stopReason || "importer stopped";
+  const stats = [
+    diag.source ? `${diag.source} path` : "",
+    diag.pagesVisited ? `${diag.pagesVisited} page${diag.pagesVisited === 1 ? "" : "s"}` : "",
+    typeof diag.lastPageAdded === "number" ? `last page added ${diag.lastPageAdded}` : "",
+    typeof diag.lastParsedCount === "number" ? `parsed ${diag.lastParsedCount}` : "",
+    typeof diag.lastAnchorCount === "number" ? `anchors ${diag.lastAnchorCount}` : "",
+  ].filter(Boolean);
+  return `${base}${stats.length ? ` (${stats.join(", ")})` : ""}`;
+}
 
 function ConnectionsPage() {
   const state = useStore((s) => s);
@@ -129,7 +162,22 @@ function ConnectionsPage() {
       setSyncState("done");
       setShowLogin(false);
       const totalText = res.totalAvailable ? ` of about ${res.totalAvailable}` : "";
-      setStatusMsg(`✓ Imported ${res.count}${totalText} leads. Background job complete.`);
+      const requestedText =
+        res.requestedCount && res.requestedCount !== res.count
+          ? ` / ${res.requestedCount} requested`
+          : "";
+      const capText =
+        res.capBypassed && res.cappedAt
+          ? ` Warmup recommendation was ${res.cappedAt}/run; manual import override used.`
+          : res.effectiveLimit && res.effectiveLimit !== res.requestedCount
+            ? ` Warmup cap limited this run to ${res.effectiveLimit}.`
+            : "";
+      const diagnosticText = res.diagnostic
+        ? ` Reason: ${formatImportDiagnostic(res.diagnostic)}.`
+        : "";
+      setStatusMsg(
+        `✓ Imported ${res.count}${requestedText}${totalText} leads. Background job complete.${capText}${diagnosticText}`,
+      );
       return;
     }
 
@@ -293,6 +341,7 @@ function ConnectionsPage() {
           limit: requestedCount,
           headless: !headful,
           force,
+          bypassWarmupImportCap: true,
         },
       });
 
@@ -419,7 +468,8 @@ function ConnectionsPage() {
                   disabled={cookieImportHostedDisabled}
                 />
                 <p className="text-[10px] text-muted-foreground ml-1">
-                  Ask for 1-1000; the warmup cap still limits each run.
+                  Ask for 1-1000; manual imports use this count while still reporting the warmup
+                  recommendation.
                 </p>
               </div>
             </div>
@@ -522,7 +572,7 @@ function ConnectionsPage() {
                       <ShieldCheck className="h-3.5 w-3.5" /> Warmup &amp; caps
                     </div>
                     <div className="text-foreground">
-                      Day {info.warmupDay}/14 · cap {info.dailyImportCap}/run
+                      Day {info.warmupDay}/14 · suggested cap {info.dailyImportCap}/run
                     </div>
                     <div
                       className={
@@ -624,8 +674,8 @@ function ConnectionsPage() {
 
               <p className="text-[10px] text-muted-foreground">
                 Each account keeps a fixed fingerprint + a single sticky residential IP across every
-                run — the core anti-ban trick. Imports are capped by a 14-day warmup ramp and
-                restricted to active hours.
+                run — the core anti-ban trick. The app shows a warmup recommendation and keeps
+                imports inside active hours.
               </p>
             </div>
           )}
@@ -644,7 +694,9 @@ function ConnectionsPage() {
             </h1>
             <p className="text-sm text-muted-foreground mt-0.5">
               {(conns.items || []).length} leads imported
-              {info ? ` · warmup day ${info.warmupDay}/14 · cap ${info.dailyImportCap}/run` : ""}
+              {info
+                ? ` · warmup day ${info.warmupDay}/14 · suggested cap ${info.dailyImportCap}/run`
+                : ""}
             </p>
           </div>
           <div className="flex gap-2">
