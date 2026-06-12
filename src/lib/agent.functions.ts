@@ -28,21 +28,27 @@ export type QueuedAction = {
   created_at: string;
 };
 
-const SYSTEM_PROMPT = `You are a LinkedIn Network Manager agent for the user.
-You help the user search their LinkedIn connections, draft personalized outreach,
-and queue actions (connection requests, DMs, emails, profile views) for human approval.
+const SYSTEM_PROMPT = `You are a friendly, sharp LinkedIn Network Manager assistant — like a helpful colleague who knows the user's network well. Talk naturally and conversationally, the way a good chat assistant does: warm, clear, and to the point. Never sound robotic or list rigid rules back at the user.
 
-IMPORTANT RULES:
-- You NEVER send anything directly to LinkedIn in real-time. Every action you propose must be queued for the user to approve.
-- Once the user approves an action in the "Requests" tab/panel, our automated background worker processes and sends it automatically. Do NOT tell the user to copy-paste messages or visit profiles manually if they have approved the actions; explain that the background worker will handle them.
-- Always search connections first before drafting.
-- Personalize every message using the connection's company/headline.
-- Keep DMs under 300 chars, emails under 150 words.
-- When the user asks for "top N" people, rank by tag relevance and seniority signals in headline.
-- After queueing actions, briefly tell the user what you queued and ask them to review the "Requests" tab to approve them.
-- If the user is in account warmup (early days), prefer queue_profile_view to gently warm targets before messaging.
-- For new connection requests, only queue if the user provides the target's full LinkedIn profile URL.
-- Use only the imported connections passed to you. If there are no imported connections, say that clearly and do not invent examples.`;
+WHAT YOU HELP WITH:
+- Answering questions about the user's connections — how many they have, who they are, who works where, who fits a role or topic.
+- Drafting personalized outreach and queueing actions (LinkedIn DMs, emails, connection requests, profile views) for the user to approve.
+
+HOW TO ANSWER:
+- A "LIVE NETWORK DATA" section below contains the user's real connections and counts. Answer questions about their network DIRECTLY from it — in plain, friendly language. Do NOT call a tool just to count or list connections; that data is already in front of you.
+- Only call a tool when the user actually wants to TAKE an action (queue a message, email, connection request, or profile view), or to search a network too large to see in full.
+- For simple questions ("how many do I have", "who works at X", "find me marketing people"), just reply conversationally. No tools, no preamble.
+
+ACTION RULES (only when queueing something):
+- You NEVER send anything to LinkedIn directly. Every action is queued for the user to approve in the "Requests" tab, and a background worker sends approved ones automatically — don't tell users to copy-paste or visit profiles manually.
+- Personalize each message using the person's company/headline. Keep DMs under 300 characters and emails under 150 words.
+- For "top N" requests, rank by relevance and seniority signals in the headline.
+- During early account warmup, prefer profile views to gently warm targets before messaging.
+- Only queue a new connection request if the user gives the target's full LinkedIn profile URL.
+- After queueing, briefly say what you queued and point them to the Requests tab.
+- Use only the connections in the data below — never invent people. If there are none yet, say so warmly and point them to import from the Connections page.
+
+Be the kind of assistant people actually enjoy talking to: helpful first, concise, and human.`;
 
 function firstName(name: string) {
   return name.trim().split(/\s+/)[0] || name || "there";
@@ -560,6 +566,7 @@ const ConnectionSchema = z.object({
   tags: z.array(z.string()),
   profileUrl: z.string().optional(),
   email: z.string().optional(),
+  connectedAt: z.number().optional(),
 });
 
 const OpsSchema = z
@@ -594,6 +601,113 @@ const QueueContextSchema = z
   .max(500)
   .optional();
 
+// Instant, free answer for plain factual questions ("how many connections do I have?")
+// so they never spend a slow model round-trip — and never loop looking for a count tool.
+function instantAnswer(userMessage: string, pool: Connection[]): string | null {
+  const lower = userMessage.toLowerCase().trim();
+  const asksCount =
+    /\b(how many|number of|count|total)\b/.test(lower) &&
+    /\b(connection|connections|contact|contacts|lead|leads|people|network)\b/.test(lower);
+  if (asksCount) {
+    if (!pool.length) {
+      return "You don't have any imported connections yet. Head to the Connections page and import from LinkedIn — then I can tell you exactly how many you've got.";
+    }
+    return (
+      `You currently have ${pool.length} imported connection${pool.length === 1 ? "" : "s"} in your network. ` +
+      "Want me to list some, find people by role or company, or draft outreach to anyone?"
+    );
+  }
+  return null;
+}
+
+// The live network snapshot the model reads to answer directly — counts, warmup state,
+// queue state, and a roster of real connections. This is what stops the model from
+// calling tools (or looping) just to count or list people.
+function buildNetworkContext(
+  pool: Connection[],
+  queue: QueueContext,
+  warmupDay: number | undefined,
+  ops: OpsContext,
+): string {
+  const lines: string[] = [
+    "\n\n--- LIVE NETWORK DATA (answer questions about the network directly from this; do not call a tool just to count or list) ---",
+    `Total imported connections: ${pool.length}.`,
+  ];
+  if (typeof warmupDay === "number") {
+    lines.push(`Account warmup: day ${warmupDay} of 14.`);
+  }
+  if (ops.import?.status) {
+    const imported =
+      typeof ops.import.importedCount === "number" ? ` (${ops.import.importedCount} imported)` : "";
+    lines.push(`Last import: ${ops.import.status}${imported}.`);
+  }
+  if (queue.length) {
+    const pending = queue.filter((a) => a.status === "pending").length;
+    lines.push(`Action queue: ${pending} pending approval, ${queue.length} total.`);
+  }
+  if (pool.length) {
+    const SHOWN = 60;
+    lines.push(
+      "\nEach connection below may include a profile URL and the date you connected. " +
+        "Share these when asked. A missing connected-date means LinkedIn didn't provide one for that person.",
+    );
+    lines.push(
+      `\nConnections${pool.length > SHOWN ? ` (showing first ${SHOWN} of ${pool.length})` : ""}:`,
+    );
+    pool.slice(0, SHOWN).forEach((c, i) => {
+      const company = c.company ? ` @ ${c.company}` : "";
+      const url = c.profileUrl ? ` · ${c.profileUrl}` : "";
+      const connected =
+        typeof c.connectedAt === "number"
+          ? ` · connected ${new Date(c.connectedAt).toLocaleDateString("en-US", {
+              year: "numeric",
+              month: "short",
+              day: "numeric",
+            })}`
+          : "";
+      lines.push(
+        `${i + 1}. ${c.name} — ${c.headline || "no headline"}${company}${connected}${url}`,
+      );
+    });
+  } else {
+    lines.push("The user has not imported any connections yet.");
+  }
+  return lines.join("\n");
+}
+
+// Convert our internal OpenAI-style message log into valid Anthropic Messages format:
+// assistant tool calls become tool_use blocks, and tool results become a user turn with
+// tool_result blocks whose ids match. The old code flattened these into plain text, which
+// broke multi-turn tool use and caused the model to loop.
+function toAnthropicMessages(messages: ChatMessage[]) {
+  const out: Array<{ role: "user" | "assistant"; content: any }> = [];
+  for (const m of messages) {
+    if (m.role === "system") continue;
+    if (m.role === "user") {
+      out.push({ role: "user", content: m.content });
+    } else if (m.role === "assistant") {
+      const blocks: any[] = [];
+      if (m.content) blocks.push({ type: "text", text: m.content });
+      for (const tc of (m.tool_calls as ToolCall[] | undefined) || []) {
+        let input: Record<string, unknown> = {};
+        try {
+          input = JSON.parse(tc.function.arguments || "{}");
+        } catch {
+          /* noop */
+        }
+        blocks.push({ type: "tool_use", id: tc.id, name: tc.function.name, input });
+      }
+      out.push({ role: "assistant", content: blocks.length ? blocks : m.content || "" });
+    } else if (m.role === "tool") {
+      out.push({
+        role: "user",
+        content: [{ type: "tool_result", tool_use_id: m.tool_call_id, content: m.content }],
+      });
+    }
+  }
+  return out;
+}
+
 export const runAgent = createServerFn({ method: "POST" })
   .inputValidator(
     z.object({
@@ -622,6 +736,8 @@ export const runAgent = createServerFn({ method: "POST" })
           attempts: a.attempts,
         }))
       : data.queue || [];
+    const instant = instantAnswer(lastUserMsg?.content ?? "", pool);
+    if (instant) return { assistant: instant, actions: [] as QueuedAction[] };
     const operational = operationalAnswer(lastUserMsg?.content ?? "", data.ops || {}, queueContext);
     if (operational) return operational;
     const deterministic = await deterministicActionAgent(lastUserMsg?.content ?? "", pool);
@@ -642,8 +758,9 @@ export const runAgent = createServerFn({ method: "POST" })
       return result;
     }
 
+    const networkContext = buildNetworkContext(pool, queueContext, data.warmupDay, data.ops || {});
     const messages: ChatMessage[] = [
-      { role: "system", content: SYSTEM_PROMPT + warmupNote },
+      { role: "system", content: SYSTEM_PROMPT + warmupNote + networkContext },
       ...data.messages,
     ];
     const queuedActions: QueuedAction[] = [];
@@ -659,7 +776,7 @@ export const runAgent = createServerFn({ method: "POST" })
     } else if (anthropicKey) {
       provider = "anthropic";
       apiUrl = "https://api.anthropic.com/v1/messages";
-      model = "claude-sonnet-4-20250514";
+      model = "claude-opus-4-8";
     }
 
     for (let i = 0; i < 5; i++) {
@@ -667,7 +784,6 @@ export const runAgent = createServerFn({ method: "POST" })
 
       if (provider === "anthropic") {
         const systemMsg = messages.find((m) => m.role === "system");
-        const chatMessages = messages.filter((m) => m.role !== "system");
         res = await fetch(apiUrl, {
           method: "POST",
           headers: {
@@ -679,10 +795,7 @@ export const runAgent = createServerFn({ method: "POST" })
             model,
             max_tokens: 1024,
             system: systemMsg?.content ?? SYSTEM_PROMPT,
-            messages: chatMessages.map((m) => ({
-              role: m.role === "tool" ? "user" : m.role,
-              content: m.content,
-            })),
+            messages: toAnthropicMessages(messages),
             tools: TOOLS.map((t) => ({
               name: t.function.name,
               description: t.function.description,

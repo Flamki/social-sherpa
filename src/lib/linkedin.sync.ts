@@ -152,6 +152,22 @@ function vectorImageUrl(img: any): string {
   return segment ? root + segment : "";
 }
 
+// LinkedIn's people-search results carry a degree badge ("Name • 1st") and the search
+// walker can pick up a blob that mashes several result cards together. Strip the badge
+// from names, and detect a headline that is actually a multi-card blob so we don't store it.
+const DEGREE_BADGE = /\s*[•·]\s*(1st|2nd|3rd)\b/gi;
+function stripDegreeBadge(name: string): string {
+  return name.replace(DEGREE_BADGE, " ").replace(/\s+/g, " ").trim();
+}
+function headlineLooksCorrupt(headline: string): boolean {
+  if (!headline) return false;
+  return (
+    /\bmutual connections?\b/i.test(headline) ||
+    /[•·]\s*(1st|2nd|3rd)\b/i.test(headline) || // a degree badge inside a headline = concatenated cards
+    headline.length > 300
+  );
+}
+
 function profileToLead(p: any): Lead | null {
   const publicId =
     text(p?.publicIdentifier) ||
@@ -167,20 +183,24 @@ function profileToLead(p: any): Lead | null {
   if (!publicId) return null;
 
   const profile = p?.miniProfile || p?.profile || p;
-  const name = nameFromProfile(profile);
-  const headline =
+  const name = stripDegreeBadge(nameFromProfile(profile));
+  const rawHeadline =
     text(profile?.occupation) ||
     text(profile?.headline) ||
     text(p?.headline) ||
     text(p?.subtitle) ||
     text(p?.primarySubtitle);
-  const location =
+  // A corrupt (multi-card) headline contaminates the row — drop it rather than store garbage.
+  // The person is still saved cleanly via name + profile link.
+  const headline = headlineLooksCorrupt(rawHeadline) ? "" : rawHeadline;
+  const rawLocation =
     text(profile?.geoLocationName) ||
     text(profile?.locationName) ||
     text(profile?.geoLocation?.defaultLocalizedName) ||
     text(profile?.location?.basicLocation?.city) ||
     text(profile?.location) ||
     text(p?.location);
+  const location = headlineLooksCorrupt(rawLocation) ? "" : rawLocation;
 
   const picture = vectorImageUrl(profile?.picture) || vectorImageUrl(p?.picture);
   const backgroundImage =
@@ -326,6 +346,9 @@ async function fetchConnectionsViaVoyager(
   const failures: string[] = [];
   const allById = new Map<string, Lead>();
   let bestDiagnostic: ImportDiagnostic | undefined;
+  // LinkedIn reports the account's full connection total on each page (paging.total).
+  // Capture the largest seen so the UI can offer an exact "import all" count.
+  let bestReportedTotal: number | undefined;
   for (const buildUrl of endpointFor) {
     const byId = new Map<string, Lead>();
     // LinkedIn often returns roughly 20 connection records even when asked for
@@ -382,7 +405,10 @@ async function fetchConnectionsViaVoyager(
       const paging = r.data?.paging || r.data?.data?.paging;
       const pagingCount = Number(paging?.count);
       const pagingTotal = Number(paging?.total);
-      if (Number.isFinite(pagingTotal) && pagingTotal >= 0) reportedTotal = pagingTotal;
+      if (Number.isFinite(pagingTotal) && pagingTotal >= 0) {
+        reportedTotal = pagingTotal;
+        bestReportedTotal = Math.max(bestReportedTotal ?? 0, pagingTotal);
+      }
       const sourceStep =
         pageItems.length ||
         (Number.isFinite(pagingCount) && pagingCount > 0 ? pagingCount : 0) ||
@@ -429,6 +455,7 @@ async function fetchConnectionsViaVoyager(
     return {
       success: true as const,
       items: Array.from(allById.values()).slice(0, limit),
+      total: bestReportedTotal,
       diagnostic: {
         ...(bestDiagnostic || {
           source: "voyager" as const,
@@ -691,6 +718,9 @@ export async function runLinkedInSync(
   const items: Lead[] = [];
   let apiDiagnostic: ImportDiagnostic | undefined;
   let searchApiDiagnostic: ImportDiagnostic | undefined;
+  // LinkedIn's reported full connection total (paging.total), surfaced so the UI's
+  // "import all" button can use the exact number instead of a flat maximum.
+  let connectionTotal: number | undefined;
 
   try {
     // ---- go to the search/connections page (session already validated) ----
@@ -734,6 +764,7 @@ export async function runLinkedInSync(
     );
     if (api.success) {
       apiDiagnostic = api.diagnostic;
+      if (typeof api.total === "number") connectionTotal = api.total;
       items.push(...api.items);
       if (items.length >= requestedLimit) {
         await opened.persistCookies().catch(() => {});
@@ -747,6 +778,7 @@ export async function runLinkedInSync(
           requestedCount: data.limit,
           effectiveLimit: requestedLimit,
           capBypassed,
+          totalAvailable: connectionTotal,
           diagnostic: api.diagnostic,
         };
       }
@@ -780,6 +812,7 @@ export async function runLinkedInSync(
             requestedCount: data.limit,
             effectiveLimit: requestedLimit,
             capBypassed,
+            totalAvailable: connectionTotal,
             diagnostic: searchApi.diagnostic,
           };
         }
@@ -841,7 +874,7 @@ export async function runLinkedInSync(
           "LinkedIn search page could not load. The pasted cookies are probably stale, or LinkedIn wants a fresh browser session.",
       };
     }
-    const totalAvailable = await page
+    const domTotal = await page
       .evaluate(() => {
         const body = document.body?.innerText || "";
         const match =
@@ -853,6 +886,9 @@ export async function runLinkedInSync(
         return Number.isFinite(parsed) ? parsed : undefined;
       })
       .catch(() => undefined as number | undefined);
+    // The Voyager connection total (paging.total) is authoritative; fall back to the
+    // DOM "About N results" count only when the API didn't report one.
+    const totalAvailable = connectionTotal ?? domTotal;
     const limit = totalAvailable ? Math.min(requestedLimit, totalAvailable) : requestedLimit;
     const seen = new Set(items.map((item) => item.publicId || item.profileUrl || item.id));
     let stagnantPages = 0;
@@ -972,7 +1008,19 @@ export async function runLinkedInSync(
         const key = p.publicId || p.profileUrl || p.name;
         if (!key || seen.has(key)) continue;
         seen.add(key);
-        items.push({ id: key, tags: [], ...p });
+        // Same sanitation as the API path: strip the "• 1st" degree badge from the name,
+        // and blank a headline/company that turned out to be a multi-card blob.
+        const cleanName = stripDegreeBadge(p.name || "");
+        const cleanHeadline = headlineLooksCorrupt(p.headline || "") ? "" : p.headline || "";
+        items.push({
+          id: key,
+          tags: [],
+          ...p,
+          name: cleanName,
+          headline: cleanHeadline,
+          company: headlineLooksCorrupt(p.headline || "") ? "" : p.company || "",
+          location: headlineLooksCorrupt(p.location || "") ? "" : p.location || "",
+        });
         added++;
         if (items.length >= limit) break;
       }

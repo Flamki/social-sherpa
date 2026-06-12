@@ -145,6 +145,12 @@ function ConnectionsPage() {
   const [proxyTestMsg, setProxyTestMsg] = useState("");
   const [cookieImportHostedDisabled, setCookieImportHostedDisabled] = useState(false);
 
+  // Your exact LinkedIn connection count, captured during import from the authoritative
+  // connectionsSummary endpoint. The "All" button uses it so a click targets your real total.
+  const knownTotal =
+    importOp?.totalAvailable && importOp.totalAvailable > 0 ? importOp.totalAvailable : undefined;
+  const allImportTarget = knownTotal ? Math.min(knownTotal, 1000) : 1000;
+
   function currentCookies() {
     return session.cookies || { li_at: liAt, JSESSIONID: jSessionId };
   }
@@ -580,18 +586,31 @@ function ConnectionsPage() {
                 <label className="text-xs font-medium text-muted-foreground ml-1">
                   Import count
                 </label>
-                <Input
-                  type="number"
-                  min={1}
-                  max={1000}
-                  value={importLimit}
-                  onChange={(e) => setImportLimit(Number(e.target.value) || 25)}
-                  className="bg-background"
-                  disabled={cookieImportHostedDisabled}
-                />
+                <div className="flex items-center gap-2">
+                  <Input
+                    type="number"
+                    min={1}
+                    max={1000}
+                    value={importLimit}
+                    onChange={(e) => setImportLimit(Number(e.target.value) || 25)}
+                    className="bg-background flex-1"
+                    disabled={cookieImportHostedDisabled}
+                  />
+                  <Button
+                    type="button"
+                    variant={importLimit === allImportTarget ? "default" : "outline"}
+                    onClick={() => setImportLimit(allImportTarget)}
+                    disabled={cookieImportHostedDisabled}
+                    className="shrink-0"
+                    title="Import every connection you have"
+                  >
+                    {knownTotal ? `All (${knownTotal})` : "All"}
+                  </Button>
+                </div>
                 <p className="text-[10px] text-muted-foreground ml-1">
-                  Ask for 1-1000; manual imports use this count while still reporting the warmup
-                  recommendation.
+                  {knownTotal
+                    ? `You have ${knownTotal} connections — click All to import every one.`
+                    : "Type a number, or click All to import every connection (your exact total shows here after your first import)."}
                 </p>
               </div>
             </div>
