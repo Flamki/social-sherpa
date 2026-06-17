@@ -451,6 +451,29 @@ function resolveTarget(pool: Connection[], raw: unknown): Connection | undefined
   );
 }
 
+function findConnectionByLooseName(pool: Connection[], raw: string): Connection | undefined {
+  const cleaned = raw
+    .toLowerCase()
+    .replace(/\b(gmail|email|e-mail|mail|address|id)\b/g, " ")
+    .replace(
+      /\b(what|whats|what's|is|the|of|for|give|show|get|tell|me|their|there|his|her|contact)\b/g,
+      " ",
+    )
+    .replace(/[^a-z0-9\s]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  if (!cleaned) return undefined;
+  return (
+    resolveTarget(pool, cleaned) ||
+    pool.find((c) =>
+      cleaned
+        .split(/\s+/)
+        .filter((t) => t.length >= 2)
+        .every((term) => c.name.toLowerCase().includes(term)),
+    )
+  );
+}
+
 function executeTool(
   pool: Connection[],
   name: string,
@@ -669,6 +692,41 @@ const QueueContextSchema = z
 // so they never spend a slow model round-trip — and never loop looking for a count tool.
 function instantAnswer(userMessage: string, pool: Connection[]): string | null {
   const lower = userMessage.toLowerCase().trim();
+  const asksEmail = /\b(gmail|email|e-mail|mail address|email address)\b/.test(lower);
+  if (asksEmail) {
+    if (!pool.length) {
+      return "I don't have any imported connections yet. Import/sync LinkedIn connections first, then I can check saved emails.";
+    }
+    const asksAnySavedEmail =
+      /\b(any|anyone|anybody|them|all|list|show|have|available|saved)\b/.test(lower) &&
+      !/\b(who|whose)\b/.test(lower);
+    if (asksAnySavedEmail) {
+      const withEmail = pool.filter((c) => c.email?.trim());
+      if (!withEmail.length) {
+        return `Right now I don't have a saved email for any of your ${pool.length} imported connection${
+          pool.length === 1 ? "" : "s"
+        }. LinkedIn browser/API import does not expose emails; I can only show emails that came from an imported LinkedIn CSV with an Email Address column.`;
+      }
+      const shown = withEmail
+        .slice(0, 10)
+        .map((c, i) => `${i + 1}. ${c.name} - ${c.email?.trim()}`)
+        .join("\n");
+      const more =
+        withEmail.length > 10 ? `\n\n...and ${withEmail.length - 10} more saved email(s).` : "";
+      return `I have saved emails for ${withEmail.length} of your ${pool.length} imported connection${
+        pool.length === 1 ? "" : "s"
+      }:\n\n${shown}${more}`;
+    }
+    const target = findConnectionByLooseName(pool, userMessage);
+    if (!target) {
+      return 'Tell me whose email you want, for example: "give me Pranjal\'s email". I can only return emails saved in imported connection data.';
+    }
+    if (target.email?.trim()) {
+      return `${target.name}'s saved email is ${target.email.trim()}.`;
+    }
+    return `I don't have a saved email for ${target.name}. LinkedIn did not provide one in the imported data.`;
+  }
+
   const asksCount =
     /\b(how many|number of|count|total)\b/.test(lower) &&
     /\b(connection|connections|contact|contacts|lead|leads|people|network)\b/.test(lower);
@@ -720,6 +778,7 @@ function buildNetworkContext(
     );
     pool.slice(0, SHOWN).forEach((c, i) => {
       const company = c.company ? ` @ ${c.company}` : "";
+      const email = c.email ? ` - email ${c.email}` : "";
       const url = c.profileUrl ? ` · ${c.profileUrl}` : "";
       const connected =
         typeof c.connectedAt === "number"
@@ -732,6 +791,12 @@ function buildNetworkContext(
       lines.push(
         `${i + 1}. ${c.name} — ${c.headline || "no headline"}${company}${connected}${url}`,
       );
+      if (email) {
+        lines[lines.length - 1] = lines[lines.length - 1].replace(
+          `${company}${connected}${url}`,
+          `${company}${email}${connected}${url}`,
+        );
+      }
     });
   } else {
     lines.push("The user has not imported any connections yet.");

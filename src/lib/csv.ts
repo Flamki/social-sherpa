@@ -11,6 +11,8 @@ export function parseLinkedInCsv(text: string): Connection[] {
   const idx = (name: string) => header.findIndex((h) => h === name);
   const iFirst = idx("first name"),
     iLast = idx("last name"),
+    iUrl = idx("url"),
+    iEmail = idx("email address"),
     iCompany = idx("company"),
     iPosition = idx("position");
   const out: Connection[] = [];
@@ -20,6 +22,8 @@ export function parseLinkedInCsv(text: string): Connection[] {
     const name = `${r[iFirst] ?? ""} ${r[iLast] ?? ""}`.trim();
     const headline = r[iPosition] ?? "";
     const company = r[iCompany] ?? "";
+    const profileUrl = iUrl >= 0 ? r[iUrl]?.trim() : "";
+    const email = iEmail >= 0 ? r[iEmail]?.trim() : "";
     if (!name) continue;
     const tagSrc = `${headline} ${company}`.toLowerCase();
     const tags = Array.from(
@@ -32,6 +36,8 @@ export function parseLinkedInCsv(text: string): Connection[] {
       company,
       location: "",
       tags,
+      profileUrl: profileUrl || undefined,
+      email: email || undefined,
     });
   }
   return out;

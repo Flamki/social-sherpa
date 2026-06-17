@@ -13,6 +13,7 @@ import {
   ChevronDown,
   ChevronUp,
   Trash2,
+  Mail,
 } from "lucide-react";
 import { useServerFn } from "@tanstack/react-start";
 
@@ -1071,18 +1072,26 @@ function ConnectionsPage() {
                         >
                           {c.name?.charAt(0) || "?"}
                         </div>
-                        {c.profileUrl ? (
-                          <a
-                            href={c.profileUrl}
-                            target="_blank"
-                            rel="noreferrer"
-                            className="hover:text-primary hover:underline transition-colors"
-                          >
-                            {c.name}
-                          </a>
-                        ) : (
-                          <span>{c.name}</span>
-                        )}
+                        <div className="min-w-0">
+                          {c.profileUrl ? (
+                            <a
+                              href={c.profileUrl}
+                              target="_blank"
+                              rel="noreferrer"
+                              className="hover:text-primary hover:underline transition-colors"
+                            >
+                              {c.name}
+                            </a>
+                          ) : (
+                            <span>{c.name}</span>
+                          )}
+                          {c.email ? (
+                            <div className="mt-1 flex items-center gap-1 text-xs font-normal text-muted-foreground">
+                              <Mail className="h-3 w-3 shrink-0" />
+                              <span className="truncate">{c.email}</span>
+                            </div>
+                          ) : null}
+                        </div>
                       </div>
                     </td>
                     <td className="p-3 text-muted-foreground hidden md:table-cell max-w-[260px] truncate">
