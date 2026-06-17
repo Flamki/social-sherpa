@@ -104,19 +104,31 @@ function Index() {
     setActState((s) => ({ ...s, [action.id]: { status: "sending" } }));
     try {
       const res = await runNow({ data: { id: action.id, cookies, headless: true } });
+      const sent = res.status === "sent";
       setActState((s) => ({
         ...s,
         [action.id]: {
-          status: res.status === "sent" ? "sent" : "failed",
+          status: sent ? "sent" : "failed",
           error: res.error,
           needsCookies: (res as any).needsCookies,
         },
       }));
+      return sent;
     } catch (e) {
       setActState((s) => ({
         ...s,
         [action.id]: { status: "failed", error: (e as Error).message },
       }));
+      return false;
+    }
+  }
+
+  async function approveCampaign(actionsToSend: any[]) {
+    for (const action of actionsToSend) {
+      const st = actState[action.id]?.status || "idle";
+      if (st === "idle" || st === "failed") {
+        await approveAndSend(action);
+      }
     }
   }
 
@@ -126,6 +138,17 @@ function Index() {
       await decide({ data: { id: action.id, approve: false } });
     } catch {
       /* non-fatal */
+    }
+  }
+
+  async function rejectCampaign(actionsToReject: any[]) {
+    setPendingActions((list) => list.filter((a) => !actionsToReject.some((r) => r.id === a.id)));
+    for (const action of actionsToReject) {
+      try {
+        await decide({ data: { id: action.id, approve: false } });
+      } catch {
+        /* non-fatal */
+      }
     }
   }
 
@@ -223,9 +246,16 @@ function Index() {
         const after = await fetchQueue({});
         const fresh = (after.success ? after.actions : []).filter((a) => !beforeIds.has(a.id));
         if (fresh.length) {
-          setPendingActions((list) => [...list, ...fresh]);
-          setActState((s) => {
-            const n = { ...s };
+          setPendingActions(fresh);
+          setActState(() => {
+            const n: Record<
+              string,
+              {
+                status: "idle" | "sending" | "sent" | "failed";
+                error?: string;
+                needsCookies?: boolean;
+              }
+            > = {};
             for (const a of fresh) n[a.id] = { status: "idle" };
             return n;
           });
@@ -239,6 +269,12 @@ function Index() {
   }
 
   const showChips = messages.length <= 1;
+  const sendableCampaignActions = pendingActions.filter((a) => {
+    const st = actState[a.id]?.status || "idle";
+    return st === "idle" || st === "failed";
+  });
+  const sendingCampaign = pendingActions.some((a) => actState[a.id]?.status === "sending");
+  const isCampaignBatch = pendingActions.length > 1;
 
   return (
     <AppShell title="AI Agent">
@@ -339,6 +375,27 @@ function Index() {
                   <p className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
                     Pending actions — approve to send now
                   </p>
+                  {isCampaignBatch && (
+                    <div className="flex flex-wrap gap-2 rounded-xl border bg-background p-3">
+                      <Button
+                        size="sm"
+                        disabled={sendingCampaign || sendableCampaignActions.length === 0}
+                        onClick={() => approveCampaign(sendableCampaignActions)}
+                      >
+                        {sendableCampaignActions.length > 0
+                          ? `Approve campaign & send ${sendableCampaignActions.length}`
+                          : "Campaign handled"}
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        disabled={sendingCampaign || sendableCampaignActions.length === 0}
+                        onClick={() => rejectCampaign(sendableCampaignActions)}
+                      >
+                        Reject campaign
+                      </Button>
+                    </div>
+                  )}
                   {pendingActions.map((a) => {
                     const st = actState[a.id]?.status || "idle";
                     const label =
@@ -364,13 +421,16 @@ function Index() {
                           {st === "failed" && (
                             <span className="text-xs font-medium text-red-500">Failed</span>
                           )}
+                          {st === "idle" && isCampaignBatch && (
+                            <span className="text-xs text-muted-foreground">Ready</span>
+                          )}
                         </div>
                         {a.body && (
                           <p className="mt-1 whitespace-pre-wrap text-xs text-muted-foreground">
                             {a.body}
                           </p>
                         )}
-                        {st === "idle" && (
+                        {st === "idle" && !isCampaignBatch && (
                           <div className="mt-2 flex gap-2">
                             <Button size="sm" onClick={() => approveAndSend(a)}>
                               Approve &amp; Send
