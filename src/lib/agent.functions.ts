@@ -37,6 +37,7 @@ WHAT YOU HELP WITH:
 HOW TO ANSWER:
 - A "LIVE NETWORK DATA" section below contains the user's real connections and counts. Answer questions about their network DIRECTLY from it — in plain, friendly language. Do NOT call a tool just to count or list connections; that data is already in front of you.
 - Only call a tool when the user actually wants to TAKE an action (queue a message, email, connection request, or profile view), or to search a network too large to see in full.
+- To find people the user is NOT already connected to (e.g. "find fintech recruiters", "people in supply chain at startups"), call find_prospects with role/industry keywords. It returns prospects with profile URLs — then call queue_connection_request for each one the user wants to reach (pass the prospect's profileUrl as target_url). Use find_prospects for NEW people; use the LIVE NETWORK DATA / search_connections for the user's EXISTING network.
 - For simple questions ("how many do I have", "who works at X", "find me marketing people"), just reply conversationally. No tools, no preamble.
 
 ACTION RULES (only when queueing something):
@@ -45,7 +46,7 @@ ACTION RULES (only when queueing something):
 - For "top N" requests, rank by relevance and seniority signals in the headline.
 - During early account warmup, prefer profile views to gently warm targets before messaging.
 - Only queue a new connection request if the user gives the target's full LinkedIn profile URL.
-- After queueing, briefly say what you queued and point them to the Requests tab.
+- After queueing, briefly say what you drafted — they can approve and send it right here in the chat (the action card appears below your message), or in the Requests tab.
 - Use only the connections in the data below — never invent people. If there are none yet, say so warmly and point them to import from the Connections page.
 
 Be the kind of assistant people actually enjoy talking to: helpful first, concise, and human.`;
@@ -127,7 +128,7 @@ async function deterministicActionAgent(userMessage: string, pool: Connection[])
 
   const names = recipients.map((c) => c.name).join(", ");
   return {
-    assistant: `Queued ${actions.length} LinkedIn message${actions.length === 1 ? "" : "s"} for approval: ${names}.\n\nOpen Requests to approve or reject before anything is marked sent.`,
+    assistant: `Drafted ${actions.length} LinkedIn message${actions.length === 1 ? "" : "s"}: ${names}.\n\nApprove and send them right here — the action cards are below. Nothing goes out until you approve.`,
     actions,
   };
 }
@@ -209,6 +210,30 @@ const TOOLS = [
   {
     type: "function",
     function: {
+      name: "find_prospects",
+      description:
+        "Search LinkedIn for NEW people OUTSIDE the user's network (any degree) by role/skill/industry. Use this when the user wants to find or reach people they are NOT already connected to. Returns prospects with profile URLs you can then pass to queue_connection_request.",
+      parameters: {
+        type: "object",
+        properties: {
+          query: {
+            type: "string",
+            description:
+              "Role + industry/skill keywords, e.g. 'fintech recruiter' or 'supply chain manager'",
+          },
+          limit: {
+            type: "number",
+            description: "How many prospects to find (max 50)",
+            default: 10,
+          },
+        },
+        required: ["query"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
       name: "queue_connection_request",
       description:
         "Queue a new LinkedIn connection request with personalized note for user approval.",
@@ -277,12 +302,31 @@ function wantsAction(lower: string) {
   return /\b(send|message|dm|contact|outreach|connect|invite|view)\b/i.test(lower);
 }
 
+// True only for genuine "what's the state of my queue/sends" questions — NOT action commands
+// like "queue connection requests" (where "queue" is a verb).
 function wantsQueueStatus(lower: string) {
+  if (requestsNewAction(lower)) return false;
   return (
-    /\b(queue|queued|pending|approved|status|happening|happen|running|progress|line|next|sent|go|went|worker|failed|error)\b/i.test(
+    /\b(the|my|in|whole)\s+queue\b/i.test(lower) ||
+    /\bqueue\s+(status|state)\b/i.test(lower) ||
+    /\b(status|pending approval|worker)\b/i.test(lower) ||
+    /\b(how many|any)\b.*\b(pending|queued|approved|sent|failed)\b/i.test(lower) ||
+    /\b(did|has|have|is|are|was|were)\b.*\b(sent|send|go|gone|approved|process|run|work)\b/i.test(
       lower,
-    ) || /\bdid\s+it\b/i.test(lower)
+    ) ||
+    /\bdid\s+it\b/i.test(lower) ||
+    /\b(failed|errored)\b/i.test(lower)
   );
+}
+
+// The user is asking to perform a NEW action (find / connect / message people), so the
+// deterministic status fast-path must NOT hijack it — let the agent's tools handle it.
+function requestsNewAction(lower: string) {
+  const verb =
+    /\b(find|search|discover|look\s*up|connect|message|dm|invite|reach|email|queue|send|draft)\b/i;
+  const people =
+    /\b(prospect|prospects|lead|leads|people|person|marketer|marketers|recruiter|recruiters|founder|founders|engineer|developer|manager|managers|ceo|cto|cfo|coo|vp|head|director|sales|hr|designer|analyst|student|connection request|connection requests|new people)\b/i;
+  return verb.test(lower) && people.test(lower);
 }
 
 function queueSummary(queue: QueueContext) {
@@ -328,6 +372,8 @@ function describeQueueItem(a: QueueContext[number]) {
 
 function operationalAnswer(userMessage: string, ops: OpsContext, queue: QueueContext) {
   const lower = userMessage.toLowerCase();
+  // Never hijack a "find / connect / message these people" request with a status dump.
+  if (requestsNewAction(lower)) return null;
   const importState = ops.import;
   const q = queueSummary(queue);
   const queuedMatch = wantsAction(lower)
@@ -387,6 +433,24 @@ function operationalAnswer(userMessage: string, ops: OpsContext, queue: QueueCon
   return null;
 }
 
+// Resolve the connection a tool call refers to. The model may pass an exact id OR (since it
+// answers from the injected roster, which lists people by name) the person's name — so we
+// match on id first, then exact name, then a contained-name match.
+function resolveTarget(pool: Connection[], raw: unknown): Connection | undefined {
+  const key = String(raw ?? "")
+    .trim()
+    .toLowerCase();
+  if (!key) return undefined;
+  return (
+    pool.find((c) => c.id.toLowerCase() === key) ||
+    pool.find((c) => c.name.toLowerCase() === key) ||
+    (key.length >= 3
+      ? pool.find((c) => c.name.toLowerCase().includes(key)) ||
+        pool.find((c) => key.includes(c.name.toLowerCase()))
+      : undefined)
+  );
+}
+
 function executeTool(
   pool: Connection[],
   name: string,
@@ -402,7 +466,7 @@ function executeTool(
   const id = crypto.randomUUID();
   const created_at = new Date().toISOString();
   if (name === "queue_linkedin_message") {
-    const target = pool.find((c) => c.id === args.target_id);
+    const target = resolveTarget(pool, args.target_id);
     if (!target) return { result: { error: "connection not found" } };
     const action: QueuedAction = {
       id,
@@ -419,7 +483,7 @@ function executeTool(
     return { result: { queued: true, action_id: id }, action };
   }
   if (name === "queue_email") {
-    const target = pool.find((c) => c.id === args.target_id);
+    const target = resolveTarget(pool, args.target_id);
     if (!target) return { result: { error: "connection not found" } };
     const action: QueuedAction = {
       id,
@@ -455,7 +519,7 @@ function executeTool(
     return { result: { queued: true, action_id: id }, action };
   }
   if (name === "queue_profile_view") {
-    const target = pool.find((c) => c.id === args.target_id);
+    const target = resolveTarget(pool, args.target_id);
     if (!target) return { result: { error: "connection not found" } };
     const action: QueuedAction = {
       id,
@@ -716,6 +780,8 @@ export const runAgent = createServerFn({ method: "POST" })
       warmupDay: z.number().min(0).max(14).optional(),
       ops: OpsSchema,
       queue: QueueContextSchema,
+      // Cookies let the agent run live prospect searches (find_prospects) on the user's behalf.
+      cookies: z.object({ li_at: z.string(), JSESSIONID: z.string() }).optional(),
     }),
   )
   .handler(async ({ data }) => {
@@ -874,7 +940,29 @@ export const runAgent = createServerFn({ method: "POST" })
         } catch {
           /* noop */
         }
-        const { result, action } = executeTool(pool, tc.function.name, parsedArgs);
+        let result: unknown;
+        let action: QueuedAction | undefined;
+        if (tc.function.name === "find_prospects") {
+          // Live LinkedIn people-search on the user's behalf (needs their session cookies).
+          if (!data.cookies?.li_at || !data.cookies?.JSESSIONID) {
+            result = {
+              error:
+                "Not connected to LinkedIn, so I can't search for new people. Connect on the Connections page (cookies or email/password login) first.",
+            };
+          } else {
+            const { runDiscovery } = await import("./linkedin.discover.core");
+            const disc = await runDiscovery({
+              cookies: data.cookies,
+              query: String(parsedArgs.query ?? ""),
+              limit: Math.max(1, Math.min(Number(parsedArgs.limit ?? 10), 50)),
+            });
+            result = disc.success
+              ? { prospects: disc.prospects }
+              : { error: disc.error || "Prospect search failed." };
+          }
+        } else {
+          ({ result, action } = executeTool(pool, tc.function.name, parsedArgs));
+        }
         if (action) {
           await queueActionForApproval(action);
           queuedActions.push(action);

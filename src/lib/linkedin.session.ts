@@ -173,7 +173,14 @@ function renderProxyTemplate(
     .replaceAll("{stickyId}", sessionId);
 }
 
+/** Honor LINKEDIN_DISABLE_PROXY=true — run direct on the user's own IP (right for local use,
+ *  and the fix when the configured proxy is down/unreachable). */
+export function proxyDisabled(): boolean {
+  return /^(1|true|yes|on)$/i.test((process.env.LINKEDIN_DISABLE_PROXY || "").trim());
+}
+
 function autoProxyFor(accountId: string, stickyId?: string): ProxyConfig | undefined {
+  if (proxyDisabled()) return undefined;
   const host = process.env.LINKEDIN_PROXY_HOST?.trim();
   const port = Number(process.env.LINKEDIN_PROXY_PORT);
   if (!host || !Number.isInteger(port) || port <= 0) return undefined;
@@ -228,10 +235,13 @@ const FINGERPRINT_POOL: Fingerprint[] = [
   },
 ];
 
-function pickFingerprint(accountId: string): Fingerprint {
+export function pickFingerprint(accountId: string): Fingerprint {
   // Deterministic pick from the account id so it's stable even if the file is lost.
   const n = parseInt(accountId.slice(0, 8), 16);
-  const poolIndex = n % FINGERPRINT_POOL.length;
+  // Guard against a non-hex id (parseInt → NaN) so we never index out of the pool.
+  const poolIndex = Number.isFinite(n)
+    ? ((n % FINGERPRINT_POOL.length) + FINGERPRINT_POOL.length) % FINGERPRINT_POOL.length
+    : 0;
 
   return alignFingerprintToGeo(FINGERPRINT_POOL[poolIndex]);
 }
@@ -301,6 +311,11 @@ export async function getOrCreateSession(li_at: string): Promise<AccountSession>
       existing.proxy = autoProxy;
       existing.proxySource = "auto";
     }
+    // Proxy turned off (or down): drop any saved proxy so we run direct on the user's IP.
+    if (proxyDisabled()) {
+      existing.proxy = undefined;
+      existing.proxySource = undefined;
+    }
     await fs.writeFile(file, JSON.stringify(existing, null, 2));
     return existing;
   } catch {
@@ -318,6 +333,47 @@ export async function getOrCreateSession(li_at: string): Promise<AccountSession>
     await fs.writeFile(file, JSON.stringify(fresh, null, 2));
     return fresh;
   }
+}
+
+/**
+ * Adopt a credential-login session. The SAME persistent profile that just authenticated
+ * becomes the account's profile, with the SAME fingerprint and NO proxy — so every later
+ * action (import, message, invite) runs from the exact browser context + IP the session was
+ * issued to. Without this, the session is replayed from a different profile/IP/fingerprint and
+ * LinkedIn rejects the API calls with 401 "session expired".
+ */
+export async function adoptCredentialLogin(
+  li_at: string,
+  JSESSIONID: string,
+  fingerprint: Fingerprint,
+  loginProfileDir: string,
+): Promise<AccountSession> {
+  const accountId = accountIdFromCookie(li_at);
+  const dest = profileDirFor(accountId);
+  // Move the just-authenticated profile into the account's slot so the live session is reused.
+  try {
+    if (path.resolve(loginProfileDir) !== path.resolve(dest)) {
+      await fs.rm(dest, { recursive: true, force: true }).catch(() => {});
+      await fs.mkdir(path.dirname(dest), { recursive: true });
+      await fs.rename(loginProfileDir, dest);
+    }
+  } catch {
+    // Cross-device or still-locked profile dir → leave it; openLinkedIn will re-seed cookies.
+  }
+  const now = new Date().toISOString();
+  const session: AccountSession = {
+    accountId,
+    fingerprint,
+    proxy: undefined,
+    proxySource: "manual", // stops auto-proxy from attaching a different IP than login used
+    cookies: { li_at, JSESSIONID },
+    createdAt: now,
+    lastUsedAt: now,
+    warmupStartedAt: now,
+  };
+  const file = await sessionFile(accountId);
+  await fs.writeFile(file, JSON.stringify(session, null, 2));
+  return session;
 }
 
 export async function saveProxy(li_at: string, proxy?: ProxyConfig): Promise<AccountSession> {

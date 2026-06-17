@@ -1,6 +1,14 @@
 import { useSyncExternalStore } from "react";
 
 import type { Connection } from "./connections.types";
+import type { Prospect } from "./linkedin.discover";
+
+export type DiscoverState = {
+  query: string;
+  items: Prospect[];
+  // publicId -> send status of the connection request
+  queued: Record<string, "sending" | "sent" | "failed">;
+};
 
 export type ActionStatus = "pending" | "approved" | "sending" | "sent" | "rejected" | "failed";
 
@@ -69,6 +77,8 @@ export type AppState = {
   // counters: yyyy-mm-dd -> { invites, messages, views }
   daily: Record<string, { invites: number; messages: number; views: number }>;
   messages: AgentMessage[];
+  // Last prospect-discovery results — persisted so they survive page navigation.
+  discover: DiscoverState;
 };
 
 const KEY = "nm.state.v1";
@@ -89,6 +99,7 @@ const DEFAULT: AppState = {
         "Hi! I'm your LinkedIn Network Manager. I can search your connections, draft outreach, manage connection requests, and more. What would you like to do?",
     },
   ],
+  discover: { query: "", items: [], queued: {} },
 };
 
 let state: AppState = DEFAULT;

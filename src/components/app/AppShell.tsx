@@ -12,6 +12,7 @@ import {
   Sun,
   LogOut,
   MessageSquareText,
+  Telescope,
 } from "lucide-react";
 import {
   DropdownMenu,
@@ -21,11 +22,12 @@ import {
   DropdownMenuSeparator,
 } from "@/components/ui/dropdown-menu";
 
-import { useStore, warmupDay, todaysUsage, effectiveCaps } from "@/lib/store";
+import { store, useStore, warmupDay, todaysUsage, effectiveCaps } from "@/lib/store";
 
 const nav = [
   { to: "/", label: "AI Agent", icon: MessageSquareText, exact: true },
   { to: "/connections", label: "Connections", icon: Users },
+  { to: "/prospects", label: "Find Prospects", icon: Telescope },
   { to: "/requests", label: "Requests", icon: UserPlus, badgeKey: "requests" as const },
   { to: "/overview", label: "Overview", icon: LayoutDashboard },
 ] as const;
@@ -201,7 +203,13 @@ export function AppShell({
               <DropdownMenuSeparator />
               <DropdownMenuItem
                 onSelect={() => {
-                  localStorage.clear();
+                  // Disconnect the LinkedIn session but KEEP imported connections, chat, and
+                  // queue — so the user doesn't have to re-import after logging back in.
+                  store.set((s) => ({
+                    ...s,
+                    session: { connected: false },
+                    ops: { ...s.ops, import: { status: "idle" } },
+                  }));
                   window.location.reload();
                 }}
               >

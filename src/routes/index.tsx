@@ -4,7 +4,12 @@ import { useServerFn } from "@tanstack/react-start";
 import { Send } from "lucide-react";
 
 import { runAgent } from "@/lib/agent.functions";
-import { listQueue } from "@/lib/action.queue";
+import {
+  listQueue,
+  runActionNow,
+  decideQueueAction,
+  clearPendingActions,
+} from "@/lib/action.queue";
 import { AppShell } from "@/components/app/AppShell";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -12,6 +17,7 @@ import {
   addActions,
   setAgentMessages,
   startWorker,
+  store,
   useStore,
   warmupDay,
   type Action,
@@ -49,6 +55,9 @@ const SUGGESTIONS = [
 function Index() {
   const agent = useServerFn(runAgent);
   const fetchQueue = useServerFn(listQueue);
+  const runNow = useServerFn(runActionNow);
+  const decide = useServerFn(decideQueueAction);
+  const clearBacklogFn = useServerFn(clearPendingActions);
   const connections = useStore((s) => s.connections.items);
   const day = useStore((s) => warmupDay(s));
   const session = useStore((s) => s.session);
@@ -63,11 +72,90 @@ function Index() {
   const turnRefs = useRef<Array<HTMLDivElement | null>>([]);
   const [activeSeg, setActiveSeg] = useState(0);
 
+  // Inline action approval, status, and on-the-spot cookie re-prompt. The chat shows ONLY the
+  // action(s) from your current request — full history lives in the Requests tab.
+  const [pendingActions, setPendingActions] = useState<any[]>([]);
+  const [actState, setActState] = useState<
+    Record<
+      string,
+      { status: "idle" | "sending" | "sent" | "failed"; error?: string; needsCookies?: boolean }
+    >
+  >({});
+  const [reLiAt, setReLiAt] = useState("");
+  const [reJsession, setReJsession] = useState("");
+  // Count of stale not-yet-sent actions sitting in the queue from earlier sessions.
+  const [backlogCount, setBacklogCount] = useState(0);
+
   // Indices of user messages — each is one "turn" / segment in the scrollbar
   const turnIndices = messages.map((m, i) => (m.role === "user" ? i : -1)).filter((i) => i >= 0);
 
+  async function loadBacklogCount() {
+    try {
+      const res = await fetchQueue({});
+      if (!res.success) return;
+      const stale = res.actions.filter((a: any) =>
+        ["pending", "approved", "retrying", "failed"].includes(a.status),
+      );
+      setBacklogCount(stale.length);
+    } catch {
+      /* non-fatal */
+    }
+  }
+
+  async function approveAndSend(
+    action: any,
+    cookieOverride?: { li_at: string; JSESSIONID: string },
+  ) {
+    const cookies = cookieOverride || session.cookies;
+    setActState((s) => ({ ...s, [action.id]: { status: "sending" } }));
+    try {
+      const res = await runNow({ data: { id: action.id, cookies, headless: true } });
+      setActState((s) => ({
+        ...s,
+        [action.id]: {
+          status: res.status === "sent" ? "sent" : "failed",
+          error: res.error,
+          needsCookies: (res as any).needsCookies,
+        },
+      }));
+    } catch (e) {
+      setActState((s) => ({
+        ...s,
+        [action.id]: { status: "failed", error: (e as Error).message },
+      }));
+    }
+  }
+
+  async function rejectAction(action: any) {
+    setPendingActions((list) => list.filter((a) => a.id !== action.id));
+    try {
+      await decide({ data: { id: action.id, approve: false } });
+    } catch {
+      /* non-fatal */
+    }
+  }
+
+  function reconnectAndRetry(action: any) {
+    const c = { li_at: reLiAt.trim(), JSESSIONID: reJsession.trim() };
+    store.set((s) => ({ ...s, session: { ...s.session, connected: true, cookies: c } }));
+    setReLiAt("");
+    setReJsession("");
+    approveAndSend(action, c);
+  }
+
+  async function clearBacklog() {
+    try {
+      await clearBacklogFn({});
+    } catch {
+      /* non-fatal */
+    }
+    setBacklogCount(0);
+  }
+
   useEffect(() => {
     startWorker();
+    loadBacklogCount();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // Auto-scroll to bottom whenever messages or loading state change
@@ -112,12 +200,14 @@ function Index() {
     try {
       const queueRes = await fetchQueue({});
       const serverQueue = queueRes.success ? queueRes.actions : [];
+      const beforeIds = new Set(serverQueue.map((a) => a.id));
       const res = await agent({
         data: {
           messages: next.map((m) => ({ role: m.role, content: m.content })),
           connections,
           warmupDay: day,
           ops,
+          cookies: session.cookies,
           queue: serverQueue.length
             ? serverQueue.map((a) => ({
                 id: a.id,
@@ -143,6 +233,17 @@ function Index() {
       setAgentMessages([...next, { role: "assistant", content: res.assistant || "(no response)" }]);
       if (res.actions.length) {
         addActions(res.actions.map((a) => ({ ...a, status: "pending" as const })) as Action[]);
+        // Surface ONLY the actions this turn created (diff against the pre-call queue).
+        const after = await fetchQueue({});
+        const fresh = (after.success ? after.actions : []).filter((a) => !beforeIds.has(a.id));
+        if (fresh.length) {
+          setPendingActions((list) => [...list, ...fresh]);
+          setActState((s) => {
+            const n = { ...s };
+            for (const a of fresh) n[a.id] = { status: "idle" };
+            return n;
+          });
+        }
       }
     } catch (e) {
       setAgentMessages([...next, { role: "assistant", content: `Error: ${(e as Error).message}` }]);
@@ -183,6 +284,17 @@ function Index() {
             className="min-h-0 flex-1 overflow-y-auto scroll-smooth [&::-webkit-scrollbar]:hidden [scrollbar-width:none]"
           >
             <div className="flex flex-col gap-4 px-6 py-6">
+              {backlogCount > 0 && (
+                <div className="flex items-center justify-between gap-3 rounded-lg border bg-muted/40 px-3 py-2 text-xs text-muted-foreground">
+                  <span>
+                    {backlogCount} older pending action{backlogCount === 1 ? "" : "s"} from a
+                    previous session are sitting in your queue.
+                  </span>
+                  <Button size="sm" variant="outline" onClick={clearBacklog}>
+                    Clear them
+                  </Button>
+                </div>
+              )}
               {messages.map((m, i) => (
                 <div
                   key={i}
@@ -234,6 +346,99 @@ function Index() {
                   <div className="rounded-2xl bg-muted px-4 py-2.5 text-sm text-muted-foreground">
                     Thinking…
                   </div>
+                </div>
+              )}
+              {pendingActions.length > 0 && (
+                <div className="ml-10 flex flex-col gap-2">
+                  <p className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
+                    Pending actions — approve to send now
+                  </p>
+                  {pendingActions.map((a) => {
+                    const st = actState[a.id]?.status || "idle";
+                    const label =
+                      a.type === "message"
+                        ? "LinkedIn DM"
+                        : a.type === "connection_request"
+                          ? "Connection request"
+                          : a.type === "profile_view"
+                            ? "Profile view"
+                            : a.type;
+                    return (
+                      <div key={a.id} className="rounded-xl border bg-background p-3">
+                        <div className="flex items-center justify-between gap-2">
+                          <span className="text-sm font-medium">
+                            {label} → {a.targetName}
+                          </span>
+                          {st === "sending" && (
+                            <span className="text-xs text-muted-foreground">Sending…</span>
+                          )}
+                          {st === "sent" && (
+                            <span className="text-xs font-medium text-emerald-600">✓ Sent</span>
+                          )}
+                          {st === "failed" && (
+                            <span className="text-xs font-medium text-red-500">Failed</span>
+                          )}
+                        </div>
+                        {a.body && (
+                          <p className="mt-1 whitespace-pre-wrap text-xs text-muted-foreground">
+                            {a.body}
+                          </p>
+                        )}
+                        {st === "idle" && (
+                          <div className="mt-2 flex gap-2">
+                            <Button size="sm" onClick={() => approveAndSend(a)}>
+                              Approve &amp; Send
+                            </Button>
+                            <Button size="sm" variant="outline" onClick={() => rejectAction(a)}>
+                              Reject
+                            </Button>
+                          </div>
+                        )}
+                        {st === "failed" && (
+                          <div className="mt-2">
+                            <p className="text-xs text-red-500">
+                              {actState[a.id]?.error || "Something went wrong."}
+                            </p>
+                            {actState[a.id]?.needsCookies ? (
+                              <div className="mt-2 space-y-1.5">
+                                <p className="text-xs text-muted-foreground">
+                                  Your LinkedIn session expired. Paste fresh cookies to retry:
+                                </p>
+                                <Input
+                                  placeholder="li_at"
+                                  value={reLiAt}
+                                  onChange={(e) => setReLiAt(e.target.value)}
+                                  className="h-8 text-xs"
+                                />
+                                <Input
+                                  placeholder="JSESSIONID"
+                                  value={reJsession}
+                                  onChange={(e) => setReJsession(e.target.value)}
+                                  className="h-8 text-xs"
+                                />
+                                <Button
+                                  size="sm"
+                                  disabled={!reLiAt.trim() || !reJsession.trim()}
+                                  onClick={() => reconnectAndRetry(a)}
+                                >
+                                  Reconnect &amp; retry
+                                </Button>
+                              </div>
+                            ) : (
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                className="mt-1"
+                                onClick={() => approveAndSend(a)}
+                              >
+                                Retry
+                              </Button>
+                            )}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
                 </div>
               )}
             </div>

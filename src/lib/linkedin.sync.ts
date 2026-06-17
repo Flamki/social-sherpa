@@ -1222,3 +1222,10 @@ export async function runLinkedInSync(
 export const syncConnections = createServerFn({ method: "POST" })
   .inputValidator(SyncInputSchema)
   .handler(async ({ data }): Promise<SyncResult> => runLinkedInSync(data));
+
+// Parse people out of a Voyager people-search response, reusing the connection tree-walk
+// + sanitizer. Exported for the prospect-discovery server function (linkedin.discover.ts),
+// which must live in its own module so its node-only imports never reach the client bundle.
+export function parseVoyagerPeople(raw: unknown, limit: number): Lead[] {
+  return parseVoyagerConnections(raw, limit);
+}

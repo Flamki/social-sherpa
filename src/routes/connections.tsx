@@ -12,6 +12,7 @@ import {
   Globe,
   ChevronDown,
   ChevronUp,
+  Trash2,
 } from "lucide-react";
 import { useServerFn } from "@tanstack/react-start";
 
@@ -24,6 +25,7 @@ import { store, useStore } from "@/lib/store";
 import { getConnectionImportJob, startConnectionImportJob } from "@/lib/import.jobs";
 import { saveProxyConfig, getSessionInfo } from "@/lib/linkedin.config";
 import { testProxy } from "@/lib/linkedin.proxy.fn";
+import { loginWithLinkedIn } from "@/lib/linkedin.login";
 import type { ImportDiagnostic, Lead } from "@/lib/linkedin.sync";
 
 export const Route = createFileRoute("/connections")({
@@ -114,6 +116,7 @@ function ConnectionsPage() {
   const getImport = useServerFn(getConnectionImportJob);
   const saveProxy = useServerFn(saveProxyConfig);
   const runProxyTest = useServerFn(testProxy);
+  const doLoginFn = useServerFn(loginWithLinkedIn);
   const fetchInfo = useServerFn(getSessionInfo);
 
   const [search, setSearch] = useState("");
@@ -132,6 +135,60 @@ function ConnectionsPage() {
   const [searchUrl, setSearchUrl] = useState(FIRST_DEGREE_SEARCH_URL);
   const [importLimit, setImportLimit] = useState(25);
   const [showLogin, setShowLogin] = useState(!session.connected);
+
+  // Email/password login (OpenOutreach-style): drives LinkedIn login in a visible window,
+  // user clears any 2FA, we capture the session cookies and hand them to the cookie pipeline.
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [loginState, setLoginState] = useState<"idle" | "loading" | "err">("idle");
+  const [loginMsg, setLoginMsg] = useState("");
+
+  function deleteAllConnections() {
+    if (!conns.items.length) return;
+    if (
+      !window.confirm(
+        `Delete all ${conns.items.length} imported connections? This clears them from the app (your LinkedIn account is untouched).`,
+      )
+    ) {
+      return;
+    }
+    store.set((s) => ({
+      ...s,
+      connections: { source: "none", items: [] },
+      ops: { ...s.ops, import: { status: "idle" } },
+    }));
+  }
+
+  async function doLogin() {
+    if (!email.trim() || !password) {
+      setLoginState("err");
+      setLoginMsg("Enter your LinkedIn email and password.");
+      return;
+    }
+    setLoginState("loading");
+    setLoginMsg("Opening LinkedIn… a window will pop up — finish any code/CAPTCHA there.");
+    try {
+      const res = await doLoginFn({ data: { email: email.trim(), password } });
+      if (res.success) {
+        store.set((s) => ({
+          ...s,
+          session: { ...s.session, connected: true, cookies: res.cookies },
+        }));
+        setLiAt(res.cookies.li_at);
+        setJSessionId(res.cookies.JSESSIONID);
+        setPassword("");
+        setLoginState("idle");
+        setLoginMsg("✓ Connected — you can import now.");
+        setShowLogin(false);
+      } else {
+        setLoginState("err");
+        setLoginMsg(res.error || "Login failed.");
+      }
+    } catch (e) {
+      setLoginState("err");
+      setLoginMsg((e as Error).message);
+    }
+  }
 
   // Stealth / safety panel
   const [showStealth, setShowStealth] = useState(false);
@@ -565,6 +622,63 @@ function ConnectionsPage() {
                       disabled={cookieImportHostedDisabled}
                     />
                   </div>
+
+                  <div className="sm:col-span-2 flex items-center gap-2 text-[10px] uppercase tracking-wide text-muted-foreground">
+                    <span className="h-px flex-1 bg-border" /> or log in with email &amp; password
+                    <span className="h-px flex-1 bg-border" />
+                  </div>
+                  <div className="space-y-1.5">
+                    <label className="text-xs font-medium text-muted-foreground ml-1">
+                      LinkedIn email
+                    </label>
+                    <Input
+                      type="email"
+                      value={email}
+                      onChange={(e) => setEmail(e.target.value)}
+                      placeholder="you@example.com"
+                      className="bg-background"
+                      disabled={cookieImportHostedDisabled || loginState === "loading"}
+                    />
+                  </div>
+                  <div className="space-y-1.5">
+                    <label className="text-xs font-medium text-muted-foreground ml-1">
+                      LinkedIn password
+                    </label>
+                    <Input
+                      type="password"
+                      value={password}
+                      onChange={(e) => setPassword(e.target.value)}
+                      onKeyDown={(e) => e.key === "Enter" && doLogin()}
+                      placeholder="••••••••"
+                      className="bg-background"
+                      disabled={cookieImportHostedDisabled || loginState === "loading"}
+                    />
+                  </div>
+                  <div className="sm:col-span-2 flex flex-wrap items-center gap-3">
+                    <Button
+                      variant="secondary"
+                      onClick={doLogin}
+                      disabled={
+                        cookieImportHostedDisabled ||
+                        loginState === "loading" ||
+                        !email.trim() ||
+                        !password
+                      }
+                    >
+                      {loginState === "loading" ? "Opening LinkedIn…" : "Log in to LinkedIn"}
+                    </Button>
+                    {loginMsg && (
+                      <span
+                        className={`text-xs ${loginState === "err" ? "text-red-500" : "text-muted-foreground"}`}
+                      >
+                        {loginMsg}
+                      </span>
+                    )}
+                  </div>
+                  <p className="sm:col-span-2 text-[10px] text-muted-foreground ml-1">
+                    A LinkedIn window opens on this machine — solve any verification code or CAPTCHA
+                    there. We capture your session and never store your password. (Local only.)
+                  </p>
                 </>
               )}
               <div className="space-y-1.5">
@@ -884,6 +998,18 @@ function ConnectionsPage() {
             </p>
           </div>
           <div className="flex gap-2">
+            {conns.items.length > 0 && (
+              <Button
+                onClick={deleteAllConnections}
+                variant="outline"
+                size="sm"
+                className="gap-2 text-red-500 hover:text-red-600"
+                title="Clear all imported connections (for a clean demo)"
+              >
+                <Trash2 className="h-4 w-4" />
+                Delete all
+              </Button>
+            )}
             <Button
               onClick={() => startRealSync(true)}
               disabled={syncState === "syncing" || !session.connected}

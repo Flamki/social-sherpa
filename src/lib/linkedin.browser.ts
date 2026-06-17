@@ -39,26 +39,19 @@ export async function openLinkedIn(opts: {
   const { getOrCreateSession, startWarmup, profileDirFor, saveCookiesForAccount } =
     await import("./linkedin.session");
   const { attachProxyCleanup, browserProxyFor } = await import("./proxy.bridge");
-  const [{ promises: fsp }, path] = await Promise.all([import("node:fs"), import("node:path")]);
+  const { promises: fsp } = await import("node:fs");
 
   const { li_at, JSESSIONID } = opts.cookies;
 
   let account = await getOrCreateSession(li_at);
   account = await startWarmup(li_at);
-  const seedLiAt = account.cookies?.li_at || li_at;
-  const seedJSESSIONID = account.cookies?.JSESSIONID || JSESSIONID;
+  // Prefer the cookies the caller just passed (e.g. a fresh reconnect) so a force-seed
+  // overwrites a stale value left in the persistent profile, rather than re-using the old one.
+  const seedLiAt = li_at || account.cookies?.li_at || "";
+  const seedJSESSIONID = JSESSIONID || account.cookies?.JSESSIONID || "";
   const fp = account.fingerprint;
 
   let proxyToUse = account.proxy;
-  const runtimeRoot = path.join(path.dirname(profileDirFor(account.accountId)), "chrome-runs");
-
-  async function makeRuntimeProfileDir() {
-    await fsp.mkdir(runtimeRoot, { recursive: true });
-    return path.join(
-      runtimeRoot,
-      `run-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`,
-    );
-  }
 
   // Cookie injection helper — SINGLE parent-domain cookie only. Setting li_at on
   // both .linkedin.com AND .www.linkedin.com makes the browser send a duplicate
@@ -119,35 +112,54 @@ export async function openLinkedIn(opts: {
   async function launchContext() {
     const bridge = await browserProxyFor(proxyToUse);
     proxyOptToUse = bridge.proxy;
-    const userDataDir = await makeRuntimeProfileDir();
-    try {
-      const ctx = await chromium.launchPersistentContext(userDataDir, {
-        channel: process.env.LINKEDIN_BROWSER_CHANNEL || "chrome",
-        headless: opts.headless ?? true,
-        args: [
-          "--no-sandbox",
-          "--disable-setuid-sandbox",
-          "--disable-blink-features=AutomationControlled",
-          "--disable-dev-shm-usage",
-          `--window-size=${fp.viewport.width},${fp.viewport.height}`,
-        ],
-        proxy: proxyOptToUse,
-        userAgent: fp.userAgent,
-        viewport: fp.viewport,
-        locale: fp.locale,
-        timezoneId: fp.timezoneId,
-        deviceScaleFactor: 1,
-      });
-      attachProxyCleanup(ctx, async () => {
-        await bridge.cleanup();
-        await fsp.rm(userDataDir, { recursive: true, force: true }).catch(() => {});
-      });
-      return ctx;
-    } catch (e) {
-      await bridge.cleanup();
-      await fsp.rm(userDataDir, { recursive: true, force: true }).catch(() => {});
-      throw e;
+    // PERSISTENT per-account profile (the Botdog model): the browser stays "logged in" on
+    // disk across runs, so LinkedIn's rotated li_at is kept and the session self-refreshes —
+    // no constant cookie re-pasting. The profile is wiped ONLY on the intentional
+    // redirect-loop recovery below, never on a normal close.
+    const userDataDir = profileDirFor(account.accountId);
+    await fsp.mkdir(userDataDir, { recursive: true });
+
+    const launchOptions = {
+      channel: process.env.LINKEDIN_BROWSER_CHANNEL || "chrome",
+      headless: opts.headless ?? true,
+      args: [
+        "--no-sandbox",
+        "--disable-setuid-sandbox",
+        "--disable-blink-features=AutomationControlled",
+        "--disable-dev-shm-usage",
+        `--window-size=${fp.viewport.width},${fp.viewport.height}`,
+      ],
+      proxy: proxyOptToUse,
+      userAgent: fp.userAgent,
+      viewport: fp.viewport,
+      locale: fp.locale,
+      timezoneId: fp.timezoneId,
+      deviceScaleFactor: 1,
+    };
+
+    // launchPersistentContext locks the profile dir. If another task for this account is
+    // holding it, wait briefly and retry instead of failing — keeps one browser per account.
+    let lastErr: any;
+    for (let attempt = 0; attempt < 4; attempt++) {
+      try {
+        const ctx = await chromium.launchPersistentContext(userDataDir, launchOptions);
+        attachProxyCleanup(ctx, async () => {
+          await bridge.cleanup();
+          // Do NOT delete userDataDir — persistence across runs is the whole point.
+        });
+        return ctx;
+      } catch (e: any) {
+        lastErr = e;
+        const locked =
+          /SingletonLock|ProcessSingleton|already in use|being used|EBUSY|in use by|cannot create/i.test(
+            String(e?.message || e),
+          );
+        if (!locked || attempt === 3) break;
+        await sleep(1500 + attempt * 1000);
+      }
     }
+    await bridge.cleanup();
+    throw lastErr;
   }
 
   try {
