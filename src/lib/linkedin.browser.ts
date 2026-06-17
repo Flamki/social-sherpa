@@ -11,7 +11,7 @@ export const jitter = (min: number, max: number) => min + Math.random() * (max -
 
 function cleanBrowserError(value: unknown) {
   return String(value || "Unknown browser error")
-    .replace(/\u001b\[[0-9;]*m/g, "")
+    .replace(new RegExp(String.fromCharCode(27) + "\\[[0-9;]*m", "g"), "")
     .split(/\nCall log:/i)[0]
     .trim();
 }
@@ -45,10 +45,11 @@ export async function openLinkedIn(opts: {
 
   let account = await getOrCreateSession(li_at);
   account = await startWarmup(li_at);
-  // Prefer the cookies the caller just passed (e.g. a fresh reconnect) so a force-seed
-  // overwrites a stale value left in the persistent profile, rather than re-using the old one.
-  const seedLiAt = li_at || account.cookies?.li_at || "";
-  const seedJSESSIONID = JSESSIONID || account.cookies?.JSESSIONID || "";
+  // Prefer the saved account cookies. Email/password login and successful browser opens can
+  // refresh LinkedIn cookies on the server, while the client may still hold an older li_at.
+  // Falling back to caller cookies still supports a brand-new manual cookie connect.
+  const seedLiAt = account.cookies?.li_at || li_at || "";
+  const seedJSESSIONID = account.cookies?.JSESSIONID || JSESSIONID || "";
   const fp = account.fingerprint;
 
   let proxyToUse = account.proxy;

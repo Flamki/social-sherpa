@@ -17,7 +17,6 @@ import {
   addActions,
   setAgentMessages,
   startWorker,
-  store,
   useStore,
   warmupDay,
   type Action,
@@ -72,7 +71,7 @@ function Index() {
   const turnRefs = useRef<Array<HTMLDivElement | null>>([]);
   const [activeSeg, setActiveSeg] = useState(0);
 
-  // Inline action approval, status, and on-the-spot cookie re-prompt. The chat shows ONLY the
+  // Inline action approval and status. The chat shows ONLY the
   // action(s) from your current request — full history lives in the Requests tab.
   const [pendingActions, setPendingActions] = useState<any[]>([]);
   const [actState, setActState] = useState<
@@ -81,8 +80,6 @@ function Index() {
       { status: "idle" | "sending" | "sent" | "failed"; error?: string; needsCookies?: boolean }
     >
   >({});
-  const [reLiAt, setReLiAt] = useState("");
-  const [reJsession, setReJsession] = useState("");
   // Count of stale not-yet-sent actions sitting in the queue from earlier sessions.
   const [backlogCount, setBacklogCount] = useState(0);
 
@@ -102,11 +99,8 @@ function Index() {
     }
   }
 
-  async function approveAndSend(
-    action: any,
-    cookieOverride?: { li_at: string; JSESSIONID: string },
-  ) {
-    const cookies = cookieOverride || session.cookies;
+  async function approveAndSend(action: any) {
+    const cookies = session.cookies;
     setActState((s) => ({ ...s, [action.id]: { status: "sending" } }));
     try {
       const res = await runNow({ data: { id: action.id, cookies, headless: true } });
@@ -133,14 +127,6 @@ function Index() {
     } catch {
       /* non-fatal */
     }
-  }
-
-  function reconnectAndRetry(action: any) {
-    const c = { li_at: reLiAt.trim(), JSESSIONID: reJsession.trim() };
-    store.set((s) => ({ ...s, session: { ...s.session, connected: true, cookies: c } }));
-    setReLiAt("");
-    setReJsession("");
-    approveAndSend(action, c);
   }
 
   async function clearBacklog() {
@@ -402,27 +388,21 @@ function Index() {
                             {actState[a.id]?.needsCookies ? (
                               <div className="mt-2 space-y-1.5">
                                 <p className="text-xs text-muted-foreground">
-                                  Your LinkedIn session expired. Paste fresh cookies to retry:
+                                  Your LinkedIn session expired. Reconnect on the Connections page,
+                                  then retry this action.
                                 </p>
-                                <Input
-                                  placeholder="li_at"
-                                  value={reLiAt}
-                                  onChange={(e) => setReLiAt(e.target.value)}
-                                  className="h-8 text-xs"
-                                />
-                                <Input
-                                  placeholder="JSESSIONID"
-                                  value={reJsession}
-                                  onChange={(e) => setReJsession(e.target.value)}
-                                  className="h-8 text-xs"
-                                />
-                                <Button
-                                  size="sm"
-                                  disabled={!reLiAt.trim() || !reJsession.trim()}
-                                  onClick={() => reconnectAndRetry(a)}
-                                >
-                                  Reconnect &amp; retry
-                                </Button>
+                                <div className="flex flex-wrap gap-2">
+                                  <Button size="sm" asChild>
+                                    <Link to="/connections">Reconnect LinkedIn</Link>
+                                  </Button>
+                                  <Button
+                                    size="sm"
+                                    variant="outline"
+                                    onClick={() => approveAndSend(a)}
+                                  >
+                                    Retry
+                                  </Button>
+                                </div>
                               </div>
                             ) : (
                               <Button
