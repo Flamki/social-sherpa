@@ -316,6 +316,53 @@ async function sendConnectionRequestViaUi(
       })
       .catch(() => false);
 
+  const clickSendByDom = async () =>
+    page
+      .evaluate(() => {
+        const visible = (el: Element) => {
+          const rect = el.getBoundingClientRect();
+          const style = window.getComputedStyle(el);
+          return (
+            rect.width > 0 &&
+            rect.height > 0 &&
+            style.visibility !== "hidden" &&
+            style.display !== "none" &&
+            Number(style.opacity || "1") > 0
+          );
+        };
+        const disabled = (el: HTMLElement) =>
+          el.hasAttribute("disabled") ||
+          el.getAttribute("aria-disabled") === "true" ||
+          el.classList.contains("disabled");
+        const textOf = (el: Element) => (el.textContent || "").replace(/\s+/g, " ").trim();
+        const labelOf = (el: Element) => el.getAttribute("aria-label") || "";
+        const dialog =
+          Array.from(
+            document.querySelectorAll<HTMLElement>(
+              "[role='dialog'], .artdeco-modal, .artdeco-modal-overlay",
+            ),
+          ).find(visible) || document.body;
+        const interactiveSelector = "button,[role='button']";
+        const candidates = Array.from(dialog.querySelectorAll<HTMLElement>(interactiveSelector))
+          .filter((el) => visible(el) && !disabled(el))
+          .filter((el) => {
+            const text = textOf(el);
+            const label = labelOf(el);
+            return (
+              /^Send$/i.test(text) ||
+              /^Send now$/i.test(text) ||
+              /^Send without a note$/i.test(text) ||
+              /^Send invitation$/i.test(text) ||
+              /send (without a note|now|invitation)/i.test(label)
+            );
+          });
+        const target = candidates[0];
+        if (!target) return false;
+        target.click();
+        return true;
+      })
+      .catch(() => false);
+
   try {
     await page.goto(targetUrl, { waitUntil: "domcontentloaded", timeout: 45_000 });
     await browserSleep(jitter(2_500, 4_500));
@@ -381,15 +428,24 @@ async function sendConnectionRequestViaUi(
 
     await browserSleep(jitter(800, 1_600));
     // In the "Add a note?" dialog, send WITHOUT a note (a plain connection request).
-    const sent = await clickVisible(
-      [
-        page.getByRole("button", { name: /Send without a note/i }),
-        page.getByRole("button", { name: /^Send$/i }),
-        page.getByRole("button", { name: /Send (now|invitation)/i }),
-        page.locator("button").filter({ hasText: /^Send$/i }),
-      ],
-      6_000,
-    );
+    let sent = false;
+    for (let attempt = 0; attempt < 3 && !sent; attempt++) {
+      if (attempt > 0) await browserSleep(jitter(700, 1_200));
+      sent = await clickVisible(
+        [
+          page.getByRole("button", { name: /Send without a note/i }),
+          page.getByRole("button", { name: /^Send$/i }),
+          page.getByRole("button", { name: /Send (now|invitation)/i }),
+          page.locator("button[aria-label*='Send']"),
+          page.locator("[role='button'][aria-label*='Send']"),
+          page.locator("[role='dialog'] button").filter({ hasText: /^Send$/i }),
+          page.locator(".artdeco-modal button").filter({ hasText: /Send/i }),
+          page.locator("button").filter({ hasText: /^Send$/i }),
+        ],
+        6_000,
+      );
+      if (!sent) sent = await clickSendByDom();
+    }
     if (!sent) {
       await closeOpened(opened);
       return { ok: false, error: "Connect dialog opened, but no Send button was available." };

@@ -91,7 +91,7 @@ function ProspectsPage() {
         return;
       }
       const res = await runNow({
-        data: { id: enq.action.id, cookies: session.cookies, headless: false },
+        data: { id: enq.action.id, cookies: session.cookies, headless: true },
       });
       setStatus(p.publicId, res.status === "sent" ? "sent" : "failed");
       if (res.status !== "sent")
