@@ -27,6 +27,7 @@ function parseSearchIntent(raw: string) {
   const query = raw.trim().replace(/\s+/g, " ");
   let location = "";
   let keywords = query;
+  let requiredTerms: string[] = [];
   const locationMatch = query.match(
     /\b(?:live|lives|living|located|based|reside|resides|stay|stays)\s+(?:in|near|around)\s+(.+?)(?=\s+(?:and|with|who|that|for|as|at|working|works|doing)\b|$)/i,
   );
@@ -34,12 +35,44 @@ function parseSearchIntent(raw: string) {
     location = locationMatch[1].trim();
     keywords = query.replace(locationMatch[0], " ");
   }
+
+  // Natural searches often arrive as "oracle employee in goa" or "people at oracle in goa".
+  // LinkedIn treats that as broad keyword text unless we split the location out ourselves.
+  if (!location) {
+    const simpleLocationMatch = query.match(
+      /\b(?:in|near|around|from)\s+([a-z][a-z\s,.-]{1,60}?)(?=\s+(?:and|with|who|that|for|as|at|working|works|doing)\b|$)/i,
+    );
+    if (simpleLocationMatch?.[1]) {
+      const candidate = simpleLocationMatch[1].trim();
+      const looksLikeIndustry =
+        /\b(fintech|saas|startup|startups|supply chain|marketing|sales|recruiting|recruitment|engineering|software|product|design|finance|hr|human resources)\b/i.test(
+          candidate,
+        );
+      if (!looksLikeIndustry) {
+        location = candidate;
+        keywords = query.replace(simpleLocationMatch[0], " ");
+      }
+    }
+  }
+
+  const companyMatch =
+    keywords.match(
+      /\b(?:at|from|working\s+at|works\s+at|employee\s+at|employees\s+at)\s+([a-z0-9][a-z0-9\s.&-]{1,60}?)(?=\s+(?:employee|employees|people|person|staff|worker|workers|who|that|with|for|as)\b|$)/i,
+    ) ||
+    keywords.match(
+      /^\s*([a-z0-9][a-z0-9\s.&-]{1,60}?)\s+(?:employee|employees|people|person|staff|worker|workers)\b/i,
+    );
+  if (companyMatch?.[1]) {
+    requiredTerms = tokenizeCompany(companyMatch[1]);
+  }
+
   keywords = keywords
     .replace(/\b(?:people|persons?|profiles?|who|that|are|is)\b/gi, " ")
     .replace(/\s+/g, " ")
     .trim();
   if (!keywords) keywords = location || query;
-  return { keywords, location };
+  if (!requiredTerms.length) requiredTerms = tokenizeStrictKeywords(keywords);
+  return { keywords, location, requiredTerms };
 }
 
 function tokenizeLocation(location: string) {
@@ -49,6 +82,37 @@ function tokenizeLocation(location: string) {
     .replace(/[\u0300-\u036f]/g, "")
     .split(/[^a-z0-9]+/)
     .filter((token) => token.length >= 3);
+}
+
+function tokenizeCompany(value: string) {
+  return value
+    .toLowerCase()
+    .normalize("NFKD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .split(/[^a-z0-9]+/)
+    .filter((token) => token.length >= 2)
+    .filter(
+      (token) =>
+        !/^(the|and|at|from|employee|employees|people|person|staff|worker|workers|company|companies)$/i.test(
+          token,
+        ),
+    );
+}
+
+function tokenizeStrictKeywords(value: string) {
+  // Only enforce proper-noun/company-ish searches. Role/industry searches are intentionally
+  // broader because LinkedIn can phrase roles many ways.
+  const companyLike = value.match(
+    /^\s*([a-z0-9][a-z0-9\s.&-]{1,60}?)\s+(?:employee|employees|staff|worker|workers)\b/i,
+  );
+  return companyLike?.[1] ? tokenizeCompany(companyLike[1]) : [];
+}
+
+function normalizeForMatch(value: string) {
+  return value
+    .toLowerCase()
+    .normalize("NFKD")
+    .replace(/[\u0300-\u036f]/g, "");
 }
 
 export async function runDiscovery(data: {
@@ -83,11 +147,17 @@ export async function runDiscovery(data: {
     const intent = parseSearchIntent(data.query);
     const kw = encodeURIComponent(intent.keywords);
     const locationTokens = tokenizeLocation(intent.location);
+    const requiredTerms = intent.requiredTerms;
     const byId = new Map<string, Prospect>();
-    const maxPages = Math.min(10, Math.ceil(limit / 10) + 2);
+    const hasHardFilters = locationTokens.length > 0 || requiredTerms.length > 0;
+    const maxPages = hasHardFilters ? 10 : Math.min(10, Math.ceil(limit / 10) + 2);
     let stagnant = 0;
 
-    for (let pageNum = 1; pageNum <= maxPages && byId.size < limit && stagnant < 2; pageNum++) {
+    for (
+      let pageNum = 1;
+      pageNum <= maxPages && byId.size < limit && (hasHardFilters || stagnant < 2);
+      pageNum++
+    ) {
       const url = `https://www.linkedin.com/search/results/people/?keywords=${kw}&origin=GLOBAL_SEARCH_HEADER&page=${pageNum}`;
       await page.goto(url, { waitUntil: "domcontentloaded", timeout: 45_000 });
       const cur = page.url();
@@ -223,10 +293,17 @@ export async function runDiscovery(data: {
         if (byId.has(c.publicId)) continue;
         const cleanName = stripBadge(c.name);
         const cleanHeadline = looksCorrupt(c.headline) ? "" : c.headline;
+        const company = companyFrom(cleanHeadline);
+        const matchText = normalizeForMatch(
+          [cleanName, cleanHeadline, company, c.location, c.publicId.replace(/-/g, " ")].join(" "),
+        );
+        if (requiredTerms.length && !requiredTerms.every((term) => matchText.includes(term))) {
+          continue;
+        }
         byId.set(c.publicId, {
           name: cleanName,
           headline: cleanHeadline,
-          company: companyFrom(cleanHeadline),
+          company,
           location: looksCorrupt(c.location) ? "" : c.location,
           profileUrl: `https://www.linkedin.com/in/${c.publicId}`,
           publicId: c.publicId,
@@ -245,7 +322,12 @@ export async function runDiscovery(data: {
       return {
         success: false,
         error: intent.location
-          ? `No people matched that location. Try the city name only, for example "${intent.location}".`
+          ? `No strict matches for "${data.query}" (${[
+              requiredTerms.length ? requiredTerms.join(" + ") : "",
+              intent.location,
+            ]
+              .filter(Boolean)
+              .join(" in ")}). Try a broader search or a different city name.`
           : 'No people matched that search. Try broader keywords (role + industry), e.g. "supply chain manager fintech".',
       };
     }
