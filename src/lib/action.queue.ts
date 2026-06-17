@@ -267,6 +267,55 @@ async function sendConnectionRequestViaUi(
   const hasSentSignal = (text: string) =>
     /\bPending\b|\bInvitation sent\b|\bYour invitation is pending\b|\bWithdraw\b/i.test(text);
 
+  const clickConnectByDom = async () =>
+    page
+      .evaluate(() => {
+        const visible = (el: Element) => {
+          const rect = el.getBoundingClientRect();
+          const style = window.getComputedStyle(el);
+          return (
+            rect.width > 0 &&
+            rect.height > 0 &&
+            style.visibility !== "hidden" &&
+            style.display !== "none" &&
+            Number(style.opacity || "1") > 0
+          );
+        };
+        const textOf = (el: Element) => (el.textContent || "").replace(/\s+/g, " ").trim();
+        const labelOf = (el: Element) => el.getAttribute("aria-label") || "";
+        const interactiveSelector = "button,a,[role='button'],[role='menuitem']";
+        const candidates = Array.from(
+          document.querySelectorAll<HTMLElement>(
+            `${interactiveSelector}, .artdeco-dropdown__content li, .artdeco-dropdown__content div`,
+          ),
+        )
+          .filter(visible)
+          .map((el) => {
+            const interactive = (el.closest(interactiveSelector) as HTMLElement | null) || el;
+            return {
+              el: interactive,
+              text: textOf(el),
+              label: labelOf(interactive) || labelOf(el),
+            };
+          })
+          .filter(
+            ({ el, text, label }, index, arr) =>
+              arr.findIndex((candidate) => candidate.el === el) === index &&
+              visible(el) &&
+              (text === "Connect" || /invite\b.*\bconnect/i.test(label)),
+          )
+          .sort((a, b) => {
+            const aMenu = a.el.closest(".artdeco-dropdown__content") ? 0 : 1;
+            const bMenu = b.el.closest(".artdeco-dropdown__content") ? 0 : 1;
+            return aMenu - bMenu;
+          });
+        const target = candidates[0]?.el;
+        if (!target) return false;
+        target.click();
+        return true;
+      })
+      .catch(() => false);
+
   try {
     await page.goto(targetUrl, { waitUntil: "domcontentloaded", timeout: 45_000 });
     await browserSleep(jitter(2_500, 4_500));
@@ -291,8 +340,11 @@ async function sendConnectionRequestViaUi(
     let clickedConnect = await clickVisible([
       page.getByRole("button", { name: /^Connect$/i }),
       page.locator("button[aria-label^='Invite']"),
+      page.locator("[role='button'][aria-label*='Invite']"),
+      page.locator("[aria-label*='connect']").filter({ hasText: /^Connect$|^$/i }),
       page.locator("button").filter({ hasText: /^Connect$/i }),
     ]);
+    if (!clickedConnect) clickedConnect = await clickConnectByDom();
     if (!clickedConnect) {
       const openedMore = await clickVisible([
         page.getByRole("button", { name: /^More/i }),
@@ -304,8 +356,14 @@ async function sendConnectionRequestViaUi(
         clickedConnect = await clickVisible([
           page.getByRole("menuitem", { name: /Connect/i }),
           page.locator("[role='menuitem']").filter({ hasText: /Connect/i }),
+          page
+            .locator(".artdeco-dropdown__content [role='button']")
+            .filter({ hasText: /^Connect$/i }),
+          page.locator(".artdeco-dropdown__content button").filter({ hasText: /^Connect$/i }),
+          page.locator(".artdeco-dropdown__content li").filter({ hasText: /^Connect$/i }),
           page.locator("div[aria-label^='Invite']"),
         ]);
+        if (!clickedConnect) clickedConnect = await clickConnectByDom();
       }
     }
     if (!clickedConnect) {
