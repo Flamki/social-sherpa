@@ -33,7 +33,6 @@ export type SendResult =
 export const sendMessage = createServerFn({ method: "POST" })
   .inputValidator(SendInput)
   .handler(async ({ data }): Promise<SendResult> => {
-    const { openLinkedIn } = await import("./linkedin.browser");
     const { getOrCreateSession, effectiveMessagesCap } = await import("./linkedin.session");
 
     // Cap check BEFORE opening the browser.
@@ -48,50 +47,25 @@ export const sendMessage = createServerFn({ method: "POST" })
       };
     }
 
-    const opened = await openLinkedIn({ cookies: data.cookies, headless: data.headless });
-    if (!opened.ok) return { success: false, error: opened.error, challenge: opened.challenge };
-
-    const { context } = opened;
     try {
       const threadId = data.threadUrl.split("/messaging/thread/")[1]?.split("/")[0] || "";
       if (!threadId) {
-        await opened.persistCookies?.().catch(() => {});
-        await context.close().catch(() => {});
         return { success: false, error: "Could not parse thread id from URL." };
       }
 
-      // Small human pause before sending.
+      // Voyager messaging can reject a valid browser login with 403. Use the real LinkedIn
+      // message composer instead, from the same persisted session profile.
       await sleep(jitter(1200, 2800));
-
-      // Send through the centralized hardened Voyager client.
-      const { currentJsession, voyagerRequest } = await import("./linkedin.voyager");
-      const payload = {
-        eventCreate: {
-          value: {
-            "com.linkedin.voyager.messaging.create.MessageCreate": {
-              body: data.message,
-              attachments: [],
-              attributedBody: { text: data.message, attributes: [] },
-              mediaAttachments: [],
-            },
-          },
-        },
-        dedupeByClientGeneratedToken: false,
-      };
-      const r = await voyagerRequest(context, {
-        method: "POST",
-        url: `https://www.linkedin.com/voyager/api/messaging/conversations/${encodeURIComponent(threadId)}/events?action=create`,
-        jsessionid: await currentJsession(context, data.cookies.JSESSIONID),
-        body: payload,
-        headers: { "content-type": "application/json; charset=UTF-8" },
+      const { sendLinkedInMessageViaThreadUi } = await import("./linkedin.message.ui");
+      const result = await sendLinkedInMessageViaThreadUi({
+        cookies: data.cookies,
+        headless: data.headless,
+        threadUrl: data.threadUrl,
+        body: data.message,
       });
 
-      await sleep(jitter(800, 1600));
-      await opened.persistCookies?.().catch(() => {});
-      await context.close().catch(() => {});
-
-      if (r.reason !== "ok") {
-        return { success: false, error: r.message, challenge: r.reason === "challenge" };
+      if (!result.ok) {
+        return { success: false, error: result.error };
       }
 
       sentToday[key] = used + 1;
@@ -101,8 +75,6 @@ export const sendMessage = createServerFn({ method: "POST" })
         remainingToday: Math.max(0, cap - (used + 1)),
       };
     } catch (e) {
-      await opened.persistCookies?.().catch(() => {});
-      await context.close().catch(() => {});
       return { success: false, error: (e as Error).message };
     }
   });

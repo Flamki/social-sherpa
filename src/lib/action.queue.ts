@@ -113,49 +113,8 @@ function profileUrlFor(action: QueueAction) {
   return "";
 }
 
-function publicIdFromActionUrl(url: string): string {
-  const m = url.match(/\/in\/([^/?#]+)/i);
-  if (!m?.[1]) return "";
-  try {
-    return decodeURIComponent(m[1]).trim();
-  } catch {
-    return m[1].trim();
-  }
-}
-
-// Resolve a profile's stable LinkedIn id from its public handle (vanity URL). The id is
-// what the messaging and invitation APIs need — there is no per-profile page navigation.
-async function resolveProfileId(context: any, jsessionid: string, publicId: string) {
-  const { voyagerRequest } = await import("./linkedin.voyager");
-  const r = await voyagerRequest(context, {
-    url: `https://www.linkedin.com/voyager/api/identity/dash/profiles?q=memberIdentity&memberIdentity=${encodeURIComponent(publicId)}`,
-    jsessionid,
-    retries: 1,
-  });
-  if (r.reason !== "ok") {
-    return { id: "", entityUrn: "", error: `Profile lookup failed (${r.status}): ${r.message}` };
-  }
-  const pools = [
-    ...(Array.isArray(r.data?.elements) ? r.data.elements : []),
-    ...(Array.isArray(r.data?.data?.elements) ? r.data.data.elements : []),
-    ...(Array.isArray(r.data?.included) ? r.data.included : []),
-  ];
-  let entityUrn = "";
-  for (const e of pools) {
-    const urn = String(e?.entityUrn || "");
-    if (/urn:li:fsd_profile:/.test(urn)) {
-      entityUrn = urn;
-      break;
-    }
-  }
-  if (!entityUrn) {
-    return { id: "", entityUrn: "", error: "Could not resolve this profile's LinkedIn id." };
-  }
-  return { id: entityUrn.split(":").pop() || "", entityUrn, error: "" };
-}
-
-// Send a NEW LinkedIn DM via the lightweight Voyager messaging API — no profile-page
-// navigation, no button clicking. Far lighter and less bot-detectable than driving the UI.
+// Send a NEW LinkedIn DM by driving LinkedIn's real profile message composer.
+// The Voyager messaging API is now unreliable for otherwise-valid logged-in sessions.
 async function sendMessageViaProfileUi(
   action: QueueAction,
   cookies: { li_at: string; JSESSIONID: string },
@@ -163,59 +122,19 @@ async function sendMessageViaProfileUi(
 ) {
   const targetUrl = profileUrlFor(action);
   const body = safeDm(action.body);
-  if (!targetUrl) {
-    return {
-      ok: false,
-      error:
-        "DM needs the connection's full LinkedIn profile URL. " +
-        "Re-import this connection so the profile URL is stored.",
-    };
-  }
-  if (!body) return { ok: false, error: "Message action missing body." };
-  const publicId = publicIdFromActionUrl(targetUrl);
-  if (!publicId) return { ok: false, error: "Could not read the profile handle from the URL." };
+  const { sendLinkedInMessageViaProfileUi } = await import("./linkedin.message.ui");
+  return sendLinkedInMessageViaProfileUi({ cookies, headless, profileUrl: targetUrl, body });
+}
 
-  const { openLinkedIn } = await import("./linkedin.browser");
-  const { currentJsession, voyagerRequest } = await import("./linkedin.voyager");
-  const opened = await openLinkedIn({ cookies, headless });
-  if (!opened.ok) return { ok: false, error: opened.error };
-  try {
-    const jsessionid = await currentJsession(opened.context, cookies.JSESSIONID);
-    const resolved = await resolveProfileId(opened.context, jsessionid, publicId);
-    if (resolved.error) {
-      await closeOpened(opened);
-      return { ok: false, error: resolved.error };
-    }
-    const r = await voyagerRequest(opened.context, {
-      method: "POST",
-      url: "https://www.linkedin.com/voyager/api/messaging/conversations?action=create",
-      jsessionid,
-      headers: { "content-type": "application/json; charset=UTF-8" },
-      body: {
-        conversationCreate: {
-          eventCreate: {
-            value: {
-              "com.linkedin.voyager.messaging.create.MessageCreate": {
-                body,
-                attachments: [],
-                attributedBody: { text: body, attributes: [] },
-                mediaAttachments: [],
-              },
-            },
-          },
-          recipients: [`urn:li:fs_miniProfile:${resolved.id}`],
-          subtype: "MEMBER_TO_MEMBER",
-        },
-      },
-      retries: 1,
-    });
-    await closeOpened(opened);
-    if (r.reason === "ok") return { ok: true };
-    return { ok: false, error: `LinkedIn rejected the message (${r.status}): ${r.message}` };
-  } catch (e) {
-    await closeOpened(opened);
-    return { ok: false, error: (e as Error).message };
-  }
+async function sendMessageViaThreadUi(
+  action: QueueAction,
+  cookies: { li_at: string; JSESSIONID: string },
+  headless: boolean,
+) {
+  const threadUrl = (action.threadUrl || "").trim();
+  const body = safeDm(action.body);
+  const { sendLinkedInMessageViaThreadUi } = await import("./linkedin.message.ui");
+  return sendLinkedInMessageViaThreadUi({ cookies, headless, threadUrl, body });
 }
 
 // Send a connection request by driving the real "Connect" button on the profile page.
@@ -567,35 +486,9 @@ async function dispatchSend(
       ok = result.ok;
       err = result.error || "";
     } else {
-      const threadId = action.threadUrl.split("/messaging/thread/")[1]?.split("/")[0] || "";
-      if (!threadId) throw new Error("Could not parse thread id from message action.");
-      const { openLinkedIn } = await import("./linkedin.browser");
-      const { currentJsession, voyagerRequest } = await import("./linkedin.voyager");
-      const opened = await openLinkedIn({ cookies: data.cookies, headless: data.headless });
-      if (!opened.ok) throw new Error(opened.error);
-      const payload = {
-        eventCreate: {
-          value: {
-            "com.linkedin.voyager.messaging.create.MessageCreate": {
-              body: action.body,
-              attachments: [],
-              attributedBody: { text: action.body, attributes: [] },
-              mediaAttachments: [],
-            },
-          },
-        },
-        dedupeByClientGeneratedToken: false,
-      };
-      const r = await voyagerRequest(opened.context, {
-        method: "POST",
-        url: `https://www.linkedin.com/voyager/api/messaging/conversations/${encodeURIComponent(threadId)}/events?action=create`,
-        jsessionid: await currentJsession(opened.context, data.cookies.JSESSIONID),
-        body: payload,
-        headers: { "content-type": "application/json; charset=UTF-8" },
-      });
-      await closeOpened(opened);
-      ok = r.reason === "ok";
-      err = ok ? "" : r.message;
+      const result = await sendMessageViaThreadUi(action, data.cookies, data.headless);
+      ok = result.ok;
+      err = result.error || "";
     }
   } else if (action.type === "profile_view") {
     if (!data.cookies) {
