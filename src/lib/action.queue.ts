@@ -246,13 +246,26 @@ async function sendConnectionRequestViaUi(
       for (let i = 0; i < Math.min(n, 6); i++) {
         const item = loc.nth(i);
         if (await item.isVisible().catch(() => false)) {
-          await item.click({ timeout }).catch(() => {});
-          return true;
+          try {
+            await item.click({ timeout });
+            return true;
+          } catch {
+            /* try the next matching button */
+          }
         }
       }
     }
     return false;
   };
+
+  const readBody = (timeout = 5_000) =>
+    page
+      .locator("body")
+      .innerText({ timeout })
+      .catch(() => "");
+
+  const hasSentSignal = (text: string) =>
+    /\bPending\b|\bInvitation sent\b|\bYour invitation is pending\b|\bWithdraw\b/i.test(text);
 
   try {
     await page.goto(targetUrl, { waitUntil: "domcontentloaded", timeout: 45_000 });
@@ -268,11 +281,8 @@ async function sendConnectionRequestViaUi(
     }
 
     // Already connected, or an invite is already pending → treat as done.
-    const bodyText = await page
-      .locator("body")
-      .innerText({ timeout: 5_000 })
-      .catch(() => "");
-    if (/\bPending\b|\bInvitation sent\b/i.test(bodyText)) {
+    const bodyText = await readBody();
+    if (hasSentSignal(bodyText)) {
       await closeOpened(opened);
       return { ok: true };
     }
@@ -287,6 +297,7 @@ async function sendConnectionRequestViaUi(
       const openedMore = await clickVisible([
         page.getByRole("button", { name: /^More/i }),
         page.locator("button[aria-label*='More actions']"),
+        page.locator("button").filter({ hasText: /^More$/i }),
       ]);
       if (openedMore) {
         await browserSleep(jitter(600, 1_200));
@@ -298,11 +309,8 @@ async function sendConnectionRequestViaUi(
       }
     }
     if (!clickedConnect) {
-      const refreshed = await page
-        .locator("body")
-        .innerText({ timeout: 3_000 })
-        .catch(() => "");
-      const alreadyIn = /\b1st\b|\bMessage\b/i.test(refreshed) && !/\bConnect\b/i.test(refreshed);
+      const refreshed = await readBody(3_000);
+      const alreadyIn = /\b1st\b/i.test(refreshed) && !/\bConnect\b/i.test(refreshed);
       await closeOpened(opened);
       return alreadyIn
         ? { ok: true }
@@ -330,8 +338,15 @@ async function sendConnectionRequestViaUi(
     }
 
     await browserSleep(jitter(1_200, 2_500));
+    const confirmed = hasSentSignal(await readBody(5_000));
     await closeOpened(opened);
-    return { ok: true };
+    return confirmed
+      ? { ok: true }
+      : {
+          ok: false,
+          error:
+            "Clicked Send, but LinkedIn did not show a pending/sent confirmation. Please check the profile and retry if needed.",
+        };
   } catch (e) {
     await closeOpened(opened);
     return { ok: false, error: (e as Error).message };
